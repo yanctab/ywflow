@@ -1,71 +1,75 @@
-# Makefile — targets implemented by project type initialisation
-# Do not edit targets directly — run /init-<type> to implement them
+# Makefile
 
 .PHONY: build fmt fmt-check lint test clean install setup release package publish docs help
+
+BINARY  := $(shell grep '^name'    Cargo.toml | head -1 | sed 's/.*= "//' | sed 's/"//')
+VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*= "//' | sed 's/"//')
+TARGET  := x86_64-unknown-linux-musl
+PREFIX  ?= /usr/local
 
 ## help - show available targets
 help:
 	@grep -E '^## [a-zA-Z_-]+ - ' Makefile | awk 'BEGIN {FS=" - "} {printf "  %-15s %s\n", substr($$1, 4), $$2}'
 
-## build - compile the project
+## build - compile a static musl release binary
 build:
-	@echo "build: not implemented — run /init-<type>"
-	@exit 1
+	cargo build --release --target $(TARGET)
 
-## fmt - auto-format code
+## fmt - auto-format code with cargo fmt
 fmt:
-	@echo "fmt: not implemented — run /init-<type>"
-	@exit 1
+	cargo fmt
 
 ## fmt-check - check code formatting without modifying files
 fmt-check:
-	@echo "fmt-check: not implemented — run /init-<type>"
-	@exit 1
+	cargo fmt --check
 
-## lint - run formatter check and linter
+## lint - check formatting and run clippy
 lint:
-	@echo "lint: not implemented — run /init-<type>"
-	@exit 1
+	$(MAKE) fmt-check
+	cargo clippy -- -D warnings
 
 ## test - run the test suite
 test:
-	@echo "test: not implemented — run /init-<type>"
-	@exit 1
+	cargo test
 
 ## clean - remove build artifacts
 clean:
-	@echo "clean: not implemented — run /init-<type>"
-	@exit 1
+	cargo clean
 
-## install - install the project locally
-install:
-	@echo "install: not implemented — run /init-<type>"
-	@exit 1
+## install - install the binary to $(PREFIX)/bin (default: /usr/local/bin)
+install: build
+	install -Dm755 target/$(TARGET)/release/$(BINARY) $(PREFIX)/bin/$(BINARY)
 
 ## setup - install all tools and dependencies required to work on this project
 setup:
-	@echo "setup: not implemented — run /init-<type>"
-	@exit 1
+	@command -v rustup >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+	@. "$$HOME/.cargo/env" && rustup toolchain install stable && rustup target add $(TARGET) && rustup component add clippy rustfmt
+	sudo apt-get install -y musl-tools
 
-## release - tag and trigger the release pipeline
+## release - tag the current version and push to trigger the release pipeline
 release:
-	@echo "release: not implemented — run /init-<type>"
-	@exit 1
+	git tag v$(VERSION)
+	git push origin v$(VERSION)
 
-## package - build distribution packages without releasing
+## package - build .deb and AUR packages from the release binary
 package:
-	@echo "package: not implemented — run /init-<type>"
-	@exit 1
+	$(MAKE) build
+	$(MAKE) build-deb
+	$(MAKE) build-aur
 
-## publish - publish to package registry
+## publish - publish the crate to crates.io
 publish:
-	@echo "publish: not implemented — run /init-<type>"
-	@exit 1
+	cargo publish
 
-## docs - generate documentation
+## docs - open generated crate documentation in the browser
 docs:
-	@echo "docs: not implemented — run /init-<type>"
-	@exit 1
+	cargo doc --no-deps --open
+
+build-deb:
+	@scripts/build-deb.sh $(BINARY) $(VERSION)
+
+build-aur:
+	@scripts/build-aur.sh $(BINARY) $(VERSION)
 
 # ── Project-specific targets ──────────────────────────────────────────────────
 # Add targets below that are unique to this project. They will appear in
