@@ -1,0 +1,14 @@
+Package: BINARY_PLACEHOLDER
+Version: VERSION_PLACEHOLDER
+Architecture: amd64
+Maintainer: Mans <mans@example.com>
+Description: configurable human-in-the-loop workflow runner for Claude Code
+ ywflow wraps Claude Code sessions with a structured, config-driven workflow.
+ Each step launches an interactive Claude Code session with the correct model,
+ context, and skills pre-configured, keeping a human in control at each
+ transition.
+ .
+ The workflow is defined in ywflow.yaml at the project root. All steps declared
+ in that file are registered as subcommands at runtime; setup is the only
+ built-in subcommand. Variable expansion is supported via ${var}, ${task}, and
+ ${env:VAR} syntax.
