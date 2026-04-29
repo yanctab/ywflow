@@ -1,0 +1,16 @@
+pkgname=BINARY_PLACEHOLDER
+pkgver=VERSION_PLACEHOLDER
+pkgrel=1
+pkgdesc='DESCRIPTION_PLACEHOLDER'
+arch=('x86_64')
+url='https://github.com/OWNER_PLACEHOLDER/REPO_PLACEHOLDER'
+license=('MIT')
+source=("$pkgname::$url/releases/download/v$pkgver/$pkgname"
+        "$pkgname.1::$url/releases/download/v$pkgver/$pkgname.1")
+sha256sums=('SKIP'
+            'SKIP')
+
+package() {
+    install -Dm755 "$srcdir/$pkgname" "$pkgdir/usr/bin/$pkgname"
+    install -Dm644 "$srcdir/$pkgname.1" "$pkgdir/usr/share/man/man1/$pkgname.1"
+}
