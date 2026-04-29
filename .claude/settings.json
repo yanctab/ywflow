@@ -6,7 +6,25 @@
       "Bash(git *)",
       "Bash(mkdir *)",
       "Bash(touch *)",
-      "Bash(cp *)"
+      "Bash(cp *)",
+      "Bash(chmod *)",
+      "Bash(cargo init *)",
+      "Bash(cargo add *)",
+      "Bash(rustup *)",
+      "Bash(sudo apt-get *)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/mans/.claude/plugins/cache/yanct-claude-plugin/yanct-claude-plugin/1.0.2/hooks/post-edit-lint.sh"
+          }
+        ]
+      }
     ]
   }
 }
