@@ -324,4 +324,76 @@ workflow:
             result
         );
     }
+
+    #[test]
+    fn runtime_cwd() {
+        // Resolved map contains key `cwd` equal to the process working directory.
+        let config = make_config("  project: myproject", "  plan:\n    description: \"Plan\"");
+        let step_args: HashMap<String, String> = HashMap::new();
+        let result = resolve(&config, "plan", &step_args).unwrap();
+        let expected_cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(result.get("cwd"), Some(&expected_cwd));
+    }
+
+    #[test]
+    fn runtime_date() {
+        // Resolved map contains key `date` in ISO-8601 format (YYYY-MM-DD).
+        let config = make_config("  project: myproject", "  plan:\n    description: \"Plan\"");
+        let step_args: HashMap<String, String> = HashMap::new();
+        let result = resolve(&config, "plan", &step_args).unwrap();
+        let date = result.get("date").expect("date key present");
+        // Must match YYYY-MM-DD
+        assert!(
+            date.len() == 10
+                && date.chars().nth(4) == Some('-')
+                && date.chars().nth(7) == Some('-'),
+            "date not in ISO-8601 format: {date}"
+        );
+    }
+
+    #[test]
+    fn named_step_arg() {
+        // A step arg value passed in appears in the resolved map under its name.
+        let config = make_config(
+            "  project: myproject",
+            r#"  plan:
+    description: "Plan"
+    args:
+      - name: task
+        required: true
+        help: "Task""#,
+        );
+        let step_args: HashMap<String, String> =
+            [("task".to_string(), "implement_feature".to_string())].into();
+        let result = resolve(&config, "plan", &step_args).unwrap();
+        assert_eq!(result.get("task"), Some(&"implement_feature".to_string()));
+    }
+
+    #[test]
+    fn optional_missing() {
+        // An optional step arg not supplied does not produce an error and is absent.
+        let config = make_config(
+            "  project: myproject",
+            r#"  plan:
+    description: "Plan"
+    args:
+      - name: task
+        required: true
+        help: "Task"
+      - name: url
+        required: false
+        help: "Optional URL""#,
+        );
+        // Supply only the required arg, not the optional one.
+        let step_args: HashMap<String, String> =
+            [("task".to_string(), "do_stuff".to_string())].into();
+        let result = resolve(&config, "plan", &step_args).unwrap();
+        assert!(
+            !result.contains_key("url"),
+            "optional absent arg should not be in map"
+        );
+    }
 }
