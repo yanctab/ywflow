@@ -11,31 +11,27 @@ mod plugins;
 mod workflow;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
-
-/// Configurable human-in-the-loop workflow runner for Claude Code.
-#[derive(Parser)]
-#[command(name = "ywflow", version, about, long_about = None)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Initialise ywflow in the current project (creates ywflow.yaml scaffold).
-    Setup,
-    // Workflow steps defined in ywflow.yaml are registered dynamically at
-    // runtime — they do not appear as enum variants here.
-}
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let config = config::load().ok();
+    let cmd = cli::build_command(config.as_ref());
+    let matches = cmd.get_matches();
 
-    match cli.command {
-        Commands::Setup => {
+    match matches.subcommand() {
+        Some(("setup", _)) => {
             // TODO: delegate to setup handler
             todo!()
         }
+        Some((name, _)) => {
+            // TODO: delegate to workflow step handler
+            eprintln!("Running step: {name}");
+            todo!()
+        }
+        None => {
+            // No subcommand given; print help
+            cli::build_command(config.as_ref()).print_help()?;
+        }
     }
+
+    Ok(())
 }
