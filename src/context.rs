@@ -396,4 +396,23 @@ workflow:
             "optional absent arg should not be in map"
         );
     }
+
+    #[test]
+    fn env_var_expansion() {
+        // ${env:YWFLOW_TEST_VAR} resolves to the value of that env var.
+        // Safety: single-threaded test process; no other thread reads this var.
+        unsafe {
+            std::env::set_var("YWFLOW_TEST_VAR", "test_value_xyz");
+        }
+        let config = make_config(
+            "  myvar: ${env:YWFLOW_TEST_VAR}",
+            "  plan:\n    description: \"Plan\"",
+        );
+        let step_args: HashMap<String, String> = HashMap::new();
+        let result = resolve(&config, "plan", &step_args).unwrap();
+        assert_eq!(result.get("myvar"), Some(&"test_value_xyz".to_string()));
+        unsafe {
+            std::env::remove_var("YWFLOW_TEST_VAR");
+        }
+    }
 }
