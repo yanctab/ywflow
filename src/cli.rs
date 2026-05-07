@@ -2,7 +2,7 @@
 // CLI argument parsing and dynamic subcommand registration via clap v4.
 
 use crate::config::Config;
-use clap::Command;
+use clap::{Arg, Command};
 
 pub fn build_command(config: Option<&Config>) -> Command {
     let setup = Command::new("setup")
@@ -14,7 +14,13 @@ pub fn build_command(config: Option<&Config>) -> Command {
 
     if let Some(cfg) = config {
         for (name, step) in &cfg.workflow {
-            let sub = Command::new(name.clone()).about(step.description.clone());
+            let mut sub = Command::new(name.clone()).about(step.description.clone());
+            for arg in &step.args {
+                let clap_arg = Arg::new(arg.name.clone())
+                    .help(arg.help.clone())
+                    .required(arg.required);
+                sub = sub.arg(clap_arg);
+            }
             cmd = cmd.subcommand(sub);
         }
     }
@@ -25,8 +31,21 @@ pub fn build_command(config: Option<&Config>) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, StepConfig};
+    use crate::config::{CliConfig, Config, StepConfig};
     use indexmap::IndexMap;
+
+    fn minimal_config(workflow: IndexMap<String, StepConfig>) -> Config {
+        Config {
+            required_env: vec![],
+            context: IndexMap::new(),
+            cli: CliConfig {
+                command: "claude".to_string(),
+                args: vec![],
+            },
+            plugins: vec![],
+            workflow,
+        }
+    }
 
     fn two_step_config() -> Config {
         let mut workflow = IndexMap::new();
@@ -35,6 +54,7 @@ mod tests {
             StepConfig {
                 description: "Plan the work".to_string(),
                 args: vec![],
+                cli: None,
             },
         );
         workflow.insert(
@@ -42,9 +62,10 @@ mod tests {
             StepConfig {
                 description: "Execute the plan".to_string(),
                 args: vec![],
+                cli: None,
             },
         );
-        Config { workflow }
+        minimal_config(workflow)
     }
 
     #[test]
@@ -72,6 +93,38 @@ mod tests {
         assert_eq!(
             execute_sub.get_about().map(|s| s.to_string()),
             Some("Execute the plan".to_string())
+        );
+    }
+
+    #[test]
+    fn step_args_registered() {
+        use crate::config::StepArg;
+
+        let mut workflow = IndexMap::new();
+        workflow.insert(
+            "plan".to_string(),
+            StepConfig {
+                description: "Plan the work".to_string(),
+                args: vec![StepArg {
+                    name: "task".to_string(),
+                    accepts: vec![],
+                    required: true,
+                    help: "The task to plan".to_string(),
+                }],
+                cli: None,
+            },
+        );
+        let config = minimal_config(workflow);
+        let cmd = build_command(Some(&config));
+
+        let plan_sub = cmd.find_subcommand("plan").unwrap();
+        let task_arg = plan_sub
+            .get_arguments()
+            .find(|a| a.get_id() == "task")
+            .expect("expected 'task' argument on plan subcommand");
+        assert!(
+            task_arg.is_required_set(),
+            "expected 'task' argument to be required"
         );
     }
 }
