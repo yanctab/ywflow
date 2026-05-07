@@ -4,7 +4,7 @@
 // contains wiring only.
 
 mod cli;
-mod config;
+pub mod config;
 mod context;
 mod input;
 mod plugins;
