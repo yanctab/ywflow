@@ -398,6 +398,23 @@ workflow:
     }
 
     #[test]
+    fn undefined_error() {
+        // A context value referencing ${nonexistent} after all passes returns ContextError::Undefined.
+        let config = make_config(
+            "  myvar: ${nonexistent_xyz}",
+            "  plan:\n    description: \"Plan\"",
+        );
+        let step_args: HashMap<String, String> = HashMap::new();
+        let result = resolve(&config, "plan", &step_args);
+        match result {
+            Err(ContextError::Undefined(names)) => {
+                assert!(names.contains(&"nonexistent_xyz".to_string()));
+            }
+            other => panic!("expected Undefined error, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn env_var_expansion() {
         // ${env:YWFLOW_TEST_VAR} resolves to the value of that env var.
         // Safety: single-threaded test process; no other thread reads this var.
