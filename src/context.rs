@@ -415,6 +415,45 @@ workflow:
     }
 
     #[test]
+    fn expansion_order() {
+        // A context var and a step arg share a name; step arg value wins in the resolved map.
+        let config = make_config(
+            "  task: context_value",
+            r#"  plan:
+    description: "Plan"
+    args:
+      - name: task
+        required: true
+        help: "Task""#,
+        );
+        let step_args: HashMap<String, String> =
+            [("task".to_string(), "runtime_value".to_string())].into();
+        let result = resolve(&config, "plan", &step_args).unwrap();
+        assert_eq!(result.get("task"), Some(&"runtime_value".to_string()));
+    }
+
+    #[test]
+    fn reserved_override_blocked() {
+        // The pass-2 cwd value wins even if a context key named cwd were somehow present.
+        // We test this directly: seed the ctx map with a fake cwd, call pass2, verify overwrite.
+        // (Config validation blocks context key named cwd in practice, tested in config::tests.)
+        let mut ctx: HashMap<String, String> = HashMap::new();
+        ctx.insert("cwd".to_string(), "fake_path".to_string());
+        let dummy_config_yaml = "cli:\n  command: claude\ncontext:\n  x: y\nworkflow:\n  plan:\n    description: \"Plan\"\n";
+        let config = parse_and_validate(dummy_config_yaml).unwrap();
+        pass2_runtime(&mut ctx, "plan", &HashMap::new(), &config);
+        let expected_cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            ctx.get("cwd"),
+            Some(&expected_cwd),
+            "pass 2 must overwrite any prior cwd value"
+        );
+    }
+
+    #[test]
     fn env_var_expansion() {
         // ${env:YWFLOW_TEST_VAR} resolves to the value of that env var.
         // Safety: single-threaded test process; no other thread reads this var.
