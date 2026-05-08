@@ -87,6 +87,30 @@ mod tests {
         true
     }
 
+    fn http_fail(_url: &str) -> bool {
+        false
+    }
+
+    // Criterion 5: accepts [File, Url], value is existing file path → Ok
+    #[test]
+    fn url_or_file_file_path() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, "content").unwrap();
+        let path = f.path().to_str().unwrap();
+
+        let result = validate(
+            "myarg",
+            path,
+            &[AcceptsType::File, AcceptsType::Url],
+            &http_fail,
+        );
+        assert!(
+            result.is_ok(),
+            "expected Ok for file with [File, Url], got {:?}",
+            result
+        );
+    }
+
     // Criterion 4: URL + accepts [Url] + http_check returns true → Ok
     #[test]
     fn url_valid() {
