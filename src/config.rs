@@ -324,4 +324,47 @@ workflow:
             result
         );
     }
+
+    #[test]
+    fn repo_ywflow_yaml_parses() {
+        // Locate the ywflow.yaml committed to the repo root (two levels up from src/).
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let yaml_path = manifest_dir.join("ywflow.yaml");
+        if !yaml_path.exists() {
+            // Acceptable when running outside the repo tree.
+            return;
+        }
+        let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
+        let result = parse_and_validate(&content);
+        assert!(
+            result.is_ok(),
+            "ywflow.yaml at repo root must parse without errors: {:?}",
+            result
+        );
+        let config = result.unwrap();
+        assert!(
+            !config.required_env.is_empty(),
+            "ywflow.yaml must have at least one required_env entry"
+        );
+        assert!(
+            config.context.len() >= 2,
+            "ywflow.yaml must have at least two context variables"
+        );
+        assert!(
+            config.plugins.len() >= 2,
+            "ywflow.yaml must have at least two plugins"
+        );
+        assert!(
+            config.workflow.contains_key("plan"),
+            "ywflow.yaml must define a 'plan' step"
+        );
+        assert!(
+            config.workflow.contains_key("breakdown"),
+            "ywflow.yaml must define a 'breakdown' step"
+        );
+        assert!(
+            config.workflow.contains_key("execute"),
+            "ywflow.yaml must define an 'execute' step"
+        );
+    }
 }
