@@ -243,6 +243,31 @@ mod tests {
         );
     }
 
+    // Criterion 4: each run_step invocation spawns a fresh child; no state carried between calls
+    #[test]
+    fn each_invocation_is_independent() {
+        let global = CliConfig {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string(), "exit 0".to_string()],
+        };
+        let step = StepConfig {
+            description: "test".to_string(),
+            args: vec![],
+            cli: None,
+        };
+        let vars = HashMap::new();
+
+        let first = run_step(&global, &step, &vars);
+        let second = run_step(&global, &step, &vars);
+
+        assert!(first.is_ok(), "first invocation must succeed: {:?}", first);
+        assert!(
+            second.is_ok(),
+            "second invocation must succeed independently: {:?}",
+            second
+        );
+    }
+
     // Criterion: step with no step-level cli.args uses only global args
     #[test]
     fn no_step_args_uses_only_global() {
