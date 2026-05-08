@@ -69,8 +69,14 @@ pub fn validate(
 }
 
 /// Production HTTP HEAD check using reqwest blocking.
-pub fn http_head_check(_url: &str) -> bool {
-    todo!("http_head_check not yet implemented")
+pub fn http_head_check(url: &str) -> bool {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .ok()
+        .and_then(|client| client.head(url).send().ok())
+        .map(|resp| resp.status().is_success() || resp.status().as_u16() < 400)
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
