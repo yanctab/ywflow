@@ -27,21 +27,14 @@ pub fn validate(
     http_check: &dyn Fn(&str) -> bool,
 ) -> Result<(), InputError> {
     if accepts.is_empty() {
-        // No type constraint — always valid.
         return Ok(());
     }
-
     let is_url = value.starts_with("http://") || value.starts_with("https://");
-
     for accept in accepts {
         match accept {
             AcceptsType::File => {
-                if !is_url {
-                    // It looks like a file path — check existence.
-                    if std::path::Path::new(value).is_file() {
-                        return Ok(());
-                    }
-                    // Path does not exist — keep trying other accept types before failing.
+                if !is_url && std::path::Path::new(value).is_file() {
+                    return Ok(());
                 }
             }
             AcceptsType::Url => {
@@ -51,8 +44,6 @@ pub fn validate(
             }
         }
     }
-
-    // None of the accepts matched — produce the right error.
     let accepts_str = accepts
         .iter()
         .map(|a| match a {
@@ -61,19 +52,7 @@ pub fn validate(
         })
         .collect::<Vec<_>>()
         .join(", ");
-
     if is_url {
-        // Value looks like a URL but the accepts list only has File (or URL check failed).
-        let has_file = accepts.iter().any(|a| matches!(a, AcceptsType::File));
-        if has_file {
-            return Err(InputError::TypeMismatch {
-                name: arg_name.to_string(),
-                accepts: accepts_str,
-                value: value.to_string(),
-                actual: "URL".to_string(),
-            });
-        }
-        // URL not reachable — still a type-mismatch from the caller's perspective.
         return Err(InputError::TypeMismatch {
             name: arg_name.to_string(),
             accepts: accepts_str,
@@ -81,30 +60,14 @@ pub fn validate(
             actual: "URL".to_string(),
         });
     }
-
-    // It looks like a file path — either doesn't exist or accepts only URL.
-    let has_file = accepts.iter().any(|a| matches!(a, AcceptsType::File));
-    if has_file {
-        // File path accepted but file not found.
-        return Err(InputError::FileNotFound {
-            name: arg_name.to_string(),
-            value: value.to_string(),
-        });
-    }
-
-    // Path looks like a file but accepts only URL.
-    Err(InputError::TypeMismatch {
+    Err(InputError::FileNotFound {
         name: arg_name.to_string(),
-        accepts: accepts_str,
         value: value.to_string(),
-        actual: "file path".to_string(),
     })
 }
 
 /// Production HTTP HEAD check using reqwest blocking.
 pub fn http_head_check(url: &str) -> bool {
-    // Using a simple check: if we can parse the URL, attempt a HEAD request.
-    // Falls back to false on any error.
     reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -132,7 +95,7 @@ mod tests {
         false
     }
 
-    // Criterion: existing file path + accepts [File] → Ok
+    // Criterion 1: existing file path + accepts [File] → Ok
     #[test]
     fn file_valid() {
         let mut f = NamedTempFile::new().unwrap();
@@ -147,7 +110,7 @@ mod tests {
         );
     }
 
-    // Criterion: URL string + accepts [File] only → TypeMismatch
+    // Criterion 2: URL string + accepts [File] only → TypeMismatch
     #[test]
     fn file_url_rejected() {
         let result = validate(
@@ -163,7 +126,7 @@ mod tests {
         );
     }
 
-    // Criterion: non-existent file path + accepts [File] → FileNotFound
+    // Criterion 3: non-existent file path + accepts [File] → FileNotFound
     #[test]
     fn file_missing() {
         let result = validate(
@@ -179,7 +142,7 @@ mod tests {
         );
     }
 
-    // Criterion: URL + accepts [Url] + http_check returns true → Ok
+    // Criterion 4: URL + accepts [Url] + http_check returns true → Ok
     #[test]
     fn url_valid() {
         let result = validate(
@@ -195,7 +158,7 @@ mod tests {
         );
     }
 
-    // Criterion: accepts [File, Url], value is existing file path → Ok
+    // Criterion 5: accepts [File, Url], value is existing file path → Ok
     #[test]
     fn url_or_file_file_path() {
         let mut f = NamedTempFile::new().unwrap();
@@ -215,7 +178,7 @@ mod tests {
         );
     }
 
-    // Criterion: accepts [File, Url], value is URL + http_check true → Ok
+    // Criterion 6: accepts [File, Url], value is URL + http_check true → Ok
     #[test]
     fn url_or_file_url() {
         let result = validate(
