@@ -28,7 +28,7 @@ pub fn validate(
     accepts: &[AcceptsType],
     http_check: &dyn Fn(&str) -> bool,
 ) -> Result<(), InputError> {
-    let _ = (arg_name, http_check);
+    let _ = http_check;
     if accepts.is_empty() {
         return Ok(());
     }
@@ -40,6 +40,22 @@ pub fn validate(
         {
             return Ok(());
         }
+    }
+    let accepts_str = accepts
+        .iter()
+        .map(|a| match a {
+            AcceptsType::File => "file",
+            AcceptsType::Url => "url",
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if is_url {
+        return Err(InputError::TypeMismatch {
+            name: arg_name.to_string(),
+            accepts: accepts_str,
+            value: value.to_string(),
+            actual: "URL".to_string(),
+        });
     }
     Err(InputError::FileNotFound {
         name: arg_name.to_string(),
@@ -60,6 +76,22 @@ mod tests {
 
     fn no_http(_url: &str) -> bool {
         panic!("http_check must not be called for file-only tests")
+    }
+
+    // Criterion 2: URL string + accepts [File] only → TypeMismatch
+    #[test]
+    fn file_url_rejected() {
+        let result = validate(
+            "myarg",
+            "https://example.com/spec.html",
+            &[AcceptsType::File],
+            &no_http,
+        );
+        assert!(
+            matches!(result, Err(InputError::TypeMismatch { ref name, .. }) if name == "myarg"),
+            "expected TypeMismatch, got {:?}",
+            result
+        );
     }
 
     // Criterion 1: existing file path + accepts [File] → Ok
