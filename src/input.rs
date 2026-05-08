@@ -78,6 +78,22 @@ mod tests {
         panic!("http_check must not be called for file-only tests")
     }
 
+    // Criterion 3: non-existent file path + accepts [File] → FileNotFound
+    #[test]
+    fn file_missing() {
+        let result = validate(
+            "myarg",
+            "/nonexistent/path/to/file.txt",
+            &[AcceptsType::File],
+            &no_http,
+        );
+        assert!(
+            matches!(result, Err(InputError::FileNotFound { ref name, .. }) if name == "myarg"),
+            "expected FileNotFound, got {:?}",
+            result
+        );
+    }
+
     // Criterion 2: URL string + accepts [File] only → TypeMismatch
     #[test]
     fn file_url_rejected() {
