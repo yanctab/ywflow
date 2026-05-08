@@ -91,6 +91,22 @@ mod tests {
         false
     }
 
+    // Criterion 6: accepts [File, Url], value is URL + http_check true → Ok
+    #[test]
+    fn url_or_file_url() {
+        let result = validate(
+            "myarg",
+            "https://example.com",
+            &[AcceptsType::File, AcceptsType::Url],
+            &http_ok,
+        );
+        assert!(
+            result.is_ok(),
+            "expected Ok for URL with [File, Url], got {:?}",
+            result
+        );
+    }
+
     // Criterion 5: accepts [File, Url], value is existing file path → Ok
     #[test]
     fn url_or_file_file_path() {
