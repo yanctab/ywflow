@@ -71,40 +71,70 @@ ywflow <step-name> --task "implement login feature"
 
 ## Configuration
 
-ywflow reads `ywflow.yaml` from the project root. A minimal example:
+ywflow reads `ywflow.yaml` by walking up from the current working directory
+to the filesystem root — the first file found is used.
+
+### Top-level keys
+
+| Key | Type | Required |
+|-----|------|----------|
+| `required_env` | `Vec<String>` | no |
+| `context` | `IndexMap<String, String>` | no |
+| `cli` | `CliConfig` | yes (`cli.command` only) |
+| `plugins` | `Vec<Plugin>` | no |
+| `workflow` | `IndexMap<String, StepConfig>` | no |
+
+See [`docs/config.md`](docs/config.md) for the full field reference.
+
+### Plugins
+
+Install Claude Code plugins via `ywflow setup`. Two source types are supported:
 
 ```yaml
-context:
-  repo: my-project
-  owner: acme
-
-steps:
-  - name: prd
-    description: "Capture a product requirements document"
-    model: claude-opus-4-5
-    skills:
-      - write-prd
-
-  - name: implement
-    description: "Implement a feature slice test-first"
-    model: claude-sonnet-4-6
-    skills:
-      - tdd
-      - git-commit
-    args:
-      task: "${task}"
+# marketplace plugin
+plugins:
+  - name: yanct-claude-plugin
+    source: marketplace
+    package: yanct/yanct-claude-plugin
 ```
+
+```yaml
+# local plugin
+plugins:
+  - name: local-skills
+    source: local
+    path: .claude/skills
+```
+
+### Notes
+
+> **Reserved context keys:** `input`, `cwd`, and `date` are reserved by ywflow
+> and cannot be used in the `context:` block. ywflow will reject the config at
+> startup if any of these keys are present.
+
+> **Arg order:** within a step's `args` list, required args must precede
+> optional args. A required arg placed after an optional arg is a validation
+> error.
+
+> **Config discovery:** ywflow walks up from the current working directory to
+> the filesystem root, using the first `ywflow.yaml` it finds.
 
 ### Variable expansion
 
 | Syntax | Resolved from |
 |--------|---------------|
 | `${variable}` | Context variables defined in the `context:` block |
-| `${task}` | Runtime CLI argument `--task` |
+| `${<arg-name>}` | Value of a named step arg (e.g. `${task}` is the value of a step arg named `task` — not a special keyword) |
 | `${env:VAR}` | Shell environment variable `VAR` |
 
-Variables are expanded in this order: context variables, then runtime
-variables, then environment variables.
+Variables are expanded in three passes: context variables first, then runtime
+values (`cwd`, `date`, and step arg values), then environment variables.
+
+### Step-level cli.args
+
+Each workflow step may define a `cli.args` list under its `cli:` block.
+Step-level `cli.args` are appended after the global `cli.args` — they are
+not a replacement. The command receives `[global cli.args] + [step cli.args]`.
 
 ## Development
 
