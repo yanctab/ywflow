@@ -267,4 +267,19 @@ mod tests {
             "fatal config error must produce a lowercase 'error:' prefix, got: {formatted:?}"
         );
     }
+
+    /// Criterion 4: clap "derive" feature is absent from Cargo.toml; binary compiles.
+    #[test]
+    fn clap_derive_feature_absent() {
+        let cargo_toml = include_str!("../Cargo.toml");
+        // Locate the clap dependency line and assert "derive" is not in its features.
+        let clap_line = cargo_toml
+            .lines()
+            .find(|l| l.contains("clap"))
+            .expect("Cargo.toml must contain a clap dependency");
+        assert!(
+            !clap_line.contains("derive"),
+            "clap must not have the 'derive' feature; found: {clap_line:?}"
+        );
+    }
 }
