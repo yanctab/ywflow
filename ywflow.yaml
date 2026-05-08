@@ -1,0 +1,63 @@
+required_env:
+  - ANTHROPIC_API_KEY
+
+context:
+  planning_model: claude-opus-4-5
+  api_key: ${env:ANTHROPIC_API_KEY}
+  project_dir: ${cwd}
+
+cli:
+  command: claude
+  args:
+    - --model
+    - ${planning_model}
+
+plugins:
+  - name: yanct-claude-plugin
+    source: marketplace
+    package: yanct/yanct-claude-plugin
+  - name: local-skills
+    source: local
+    path: .claude/skills
+
+workflow:
+  plan:
+    description: "Plan the work: analyse the task and produce a PRD"
+    cli:
+      args:
+        - --worktree
+        - plan-session
+        - /prd-skill
+
+  breakdown:
+    description: "Break down the PRD into implementation slices"
+    args:
+      - name: prd
+        accepts:
+          - file
+          - url
+        required: true
+        help: "Path or URL of the PRD to break down"
+    cli:
+      args:
+        - --worktree
+        - breakdown-session
+        - /prd-to-issues-skill
+
+  execute:
+    description: "Execute a single implementation slice"
+    args:
+      - name: issue
+        accepts:
+          - url
+        required: true
+        help: "GitHub issue URL for the slice to implement"
+      - name: notes
+        accepts: []
+        required: false
+        help: "Optional implementation notes"
+    cli:
+      args:
+        - --worktree
+        - execute-session
+        - /execute-skill
