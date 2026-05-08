@@ -245,3 +245,116 @@ fn full_md_explains_execute_step_with_args() {
         "full.md must document the optional 'notes' arg of the execute step"
     );
 }
+
+// ── Criterion 5 ──────────────────────────────────────────────────────────────
+// docs/examples/prd-workflow.md exists and narrates the plan->breakdown->execute
+// sequence end-to-end.
+
+#[test]
+fn prd_workflow_md_exists() {
+    let path = repo_root().join("docs/examples/prd-workflow.md");
+    assert!(
+        path.exists(),
+        "docs/examples/prd-workflow.md must exist at {:?}",
+        path
+    );
+}
+
+#[test]
+fn prd_workflow_md_narrates_all_three_steps() {
+    let content = std::fs::read_to_string(repo_root().join("docs/examples/prd-workflow.md"))
+        .expect("docs/examples/prd-workflow.md must be readable");
+    assert!(
+        content.contains("plan"),
+        "prd-workflow.md must narrate the 'plan' step"
+    );
+    assert!(
+        content.contains("breakdown"),
+        "prd-workflow.md must narrate the 'breakdown' step"
+    );
+    assert!(
+        content.contains("execute"),
+        "prd-workflow.md must narrate the 'execute' step"
+    );
+}
+
+// ── Criterion 6 ──────────────────────────────────────────────────────────────
+// docs/examples/prd-workflow.md states that each step launches
+// `claude [global_args...] [step_args...]` as a blocking interactive child process.
+
+#[test]
+fn prd_workflow_md_states_blocking_child_process() {
+    let content = std::fs::read_to_string(repo_root().join("docs/examples/prd-workflow.md"))
+        .expect("docs/examples/prd-workflow.md must be readable");
+    assert!(
+        content.contains("blocking") || content.contains("block"),
+        "prd-workflow.md must state that the child process is launched as blocking"
+    );
+    assert!(
+        content.contains("interactive"),
+        "prd-workflow.md must state that the child process is interactive"
+    );
+}
+
+#[test]
+fn prd_workflow_md_shows_argv_pattern() {
+    let content = std::fs::read_to_string(repo_root().join("docs/examples/prd-workflow.md"))
+        .expect("docs/examples/prd-workflow.md must be readable");
+    assert!(
+        content.contains("global_args") || content.contains("[global args]"),
+        "prd-workflow.md must document the `claude [global_args...] [step_args...]` invocation pattern"
+    );
+    assert!(
+        content.contains("step_args") || content.contains("[step args]"),
+        "prd-workflow.md must document the step_args portion of the command"
+    );
+}
+
+// ── Criterion 7 ──────────────────────────────────────────────────────────────
+// docs/examples/prd-workflow.md states that human review is required between
+// steps (the tool exits after each step; the human decides when to run the next).
+
+#[test]
+fn prd_workflow_md_states_human_review_required() {
+    let content = std::fs::read_to_string(repo_root().join("docs/examples/prd-workflow.md"))
+        .expect("docs/examples/prd-workflow.md must be readable");
+    assert!(
+        content.to_lowercase().contains("human review")
+            || content.to_lowercase().contains("human decides"),
+        "prd-workflow.md must state that human review is required between steps"
+    );
+}
+
+#[test]
+fn prd_workflow_md_states_tool_exits_after_each_step() {
+    let content = std::fs::read_to_string(repo_root().join("docs/examples/prd-workflow.md"))
+        .expect("docs/examples/prd-workflow.md must be readable");
+    assert!(
+        content.contains("exits after") || content.contains("exit after"),
+        "prd-workflow.md must state that ywflow exits after each step"
+    );
+}
+
+// ── Criterion 8 ──────────────────────────────────────────────────────────────
+// docs/examples/prd-workflow.md states that a non-zero exit from the child
+// process propagates via std::process::exit.
+
+#[test]
+fn prd_workflow_md_states_nonzero_exit_propagates() {
+    let content = std::fs::read_to_string(repo_root().join("docs/examples/prd-workflow.md"))
+        .expect("docs/examples/prd-workflow.md must be readable");
+    assert!(
+        content.contains("non-zero") || content.contains("nonzero"),
+        "prd-workflow.md must mention non-zero exit code propagation"
+    );
+}
+
+#[test]
+fn prd_workflow_md_mentions_process_exit() {
+    let content = std::fs::read_to_string(repo_root().join("docs/examples/prd-workflow.md"))
+        .expect("docs/examples/prd-workflow.md must be readable");
+    assert!(
+        content.contains("std::process::exit"),
+        "prd-workflow.md must mention std::process::exit as the propagation mechanism"
+    );
+}
