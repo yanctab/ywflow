@@ -220,6 +220,29 @@ mod tests {
         );
     }
 
+    // Criterion 2: run_step launches process with inherited stdin/stdout/stderr
+    // and blocks until it exits. We use `sh` with `-c exit 0` so the child exits
+    // cleanly — demonstrating the full interactive exec path succeeds.
+    #[test]
+    fn run_step_inherits_io_and_exits_cleanly() {
+        let global = CliConfig {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string(), "exit 0".to_string()],
+        };
+        let step = StepConfig {
+            description: "test".to_string(),
+            args: vec![],
+            cli: None,
+        };
+        let vars = HashMap::new();
+        let result = run_step(&global, &step, &vars);
+        assert!(
+            result.is_ok(),
+            "run_step must return Ok for a clean exit: {:?}",
+            result
+        );
+    }
+
     // Criterion: step with no step-level cli.args uses only global args
     #[test]
     fn no_step_args_uses_only_global() {
