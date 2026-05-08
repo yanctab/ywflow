@@ -117,4 +117,5 @@ make package  # build .deb and AUR packages from the release binary
 make publish  # publish the crate to crates.io
 ```
 
-See `man ywflow` for full documentation.
+See [`docs/config.md`](docs/config.md) for the full `ywflow.yaml` field reference,
+or `man ywflow` for the man page.
