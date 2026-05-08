@@ -282,4 +282,23 @@ mod tests {
             "clap must not have the 'derive' feature; found: {clap_line:?}"
         );
     }
+
+    /// Criterion 5: reqwest uses rustls-tls with default-features = false so the
+    /// musl binary has no dynamic libc dependency on OpenSSL.
+    #[test]
+    fn reqwest_uses_rustls_not_openssl() {
+        let cargo_toml = include_str!("../Cargo.toml");
+        let reqwest_line = cargo_toml
+            .lines()
+            .find(|l| l.contains("reqwest"))
+            .expect("Cargo.toml must contain a reqwest dependency");
+        assert!(
+            reqwest_line.contains("rustls-tls"),
+            "reqwest must use rustls-tls (not native OpenSSL) for static musl builds; found: {reqwest_line:?}"
+        );
+        assert!(
+            reqwest_line.contains("default-features = false"),
+            "reqwest must have default-features = false to avoid pulling in native TLS; found: {reqwest_line:?}"
+        );
+    }
 }
