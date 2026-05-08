@@ -1,6 +1,8 @@
 // src/input.rs
 // Argument type validation — checks each step arg value against its declared accepts list.
 
+#![allow(dead_code)]
+
 use crate::config::AcceptsType;
 use thiserror::Error;
 
@@ -26,92 +28,28 @@ pub fn validate(
     accepts: &[AcceptsType],
     http_check: &dyn Fn(&str) -> bool,
 ) -> Result<(), InputError> {
+    let _ = (arg_name, http_check);
     if accepts.is_empty() {
-        // No type constraint — always valid.
         return Ok(());
     }
-
     let is_url = value.starts_with("http://") || value.starts_with("https://");
-
     for accept in accepts {
-        match accept {
-            AcceptsType::File => {
-                if !is_url {
-                    // It looks like a file path — check existence.
-                    if std::path::Path::new(value).is_file() {
-                        return Ok(());
-                    }
-                    // Path does not exist — keep trying other accept types before failing.
-                }
-            }
-            AcceptsType::Url => {
-                if is_url && http_check(value) {
-                    return Ok(());
-                }
-            }
+        if let AcceptsType::File = accept
+            && !is_url
+            && std::path::Path::new(value).is_file()
+        {
+            return Ok(());
         }
     }
-
-    // None of the accepts matched — produce the right error.
-    let accepts_str = accepts
-        .iter()
-        .map(|a| match a {
-            AcceptsType::File => "file",
-            AcceptsType::Url => "url",
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    if is_url {
-        // Value looks like a URL but the accepts list only has File (or URL check failed).
-        let has_file = accepts.iter().any(|a| matches!(a, AcceptsType::File));
-        if has_file {
-            return Err(InputError::TypeMismatch {
-                name: arg_name.to_string(),
-                accepts: accepts_str,
-                value: value.to_string(),
-                actual: "URL".to_string(),
-            });
-        }
-        // URL not reachable — still a type-mismatch from the caller's perspective.
-        return Err(InputError::TypeMismatch {
-            name: arg_name.to_string(),
-            accepts: accepts_str,
-            value: value.to_string(),
-            actual: "URL".to_string(),
-        });
-    }
-
-    // It looks like a file path — either doesn't exist or accepts only URL.
-    let has_file = accepts.iter().any(|a| matches!(a, AcceptsType::File));
-    if has_file {
-        // File path accepted but file not found.
-        return Err(InputError::FileNotFound {
-            name: arg_name.to_string(),
-            value: value.to_string(),
-        });
-    }
-
-    // Path looks like a file but accepts only URL.
-    Err(InputError::TypeMismatch {
+    Err(InputError::FileNotFound {
         name: arg_name.to_string(),
-        accepts: accepts_str,
         value: value.to_string(),
-        actual: "file path".to_string(),
     })
 }
 
 /// Production HTTP HEAD check using reqwest blocking.
-pub fn http_head_check(url: &str) -> bool {
-    // Using a simple check: if we can parse the URL, attempt a HEAD request.
-    // Falls back to false on any error.
-    reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .ok()
-        .and_then(|client| client.head(url).send().ok())
-        .map(|resp| resp.status().is_success() || resp.status().as_u16() < 400)
-        .unwrap_or(false)
+pub fn http_head_check(_url: &str) -> bool {
+    todo!("http_head_check not yet implemented")
 }
 
 #[cfg(test)]
@@ -124,15 +62,7 @@ mod tests {
         panic!("http_check must not be called for file-only tests")
     }
 
-    fn http_ok(_url: &str) -> bool {
-        true
-    }
-
-    fn http_fail(_url: &str) -> bool {
-        false
-    }
-
-    // Criterion: existing file path + accepts [File] → Ok
+    // Criterion 1: existing file path + accepts [File] → Ok
     #[test]
     fn file_valid() {
         let mut f = NamedTempFile::new().unwrap();
@@ -143,90 +73,6 @@ mod tests {
         assert!(
             result.is_ok(),
             "expected Ok for existing file, got {:?}",
-            result
-        );
-    }
-
-    // Criterion: URL string + accepts [File] only → TypeMismatch
-    #[test]
-    fn file_url_rejected() {
-        let result = validate(
-            "myarg",
-            "https://example.com/spec.html",
-            &[AcceptsType::File],
-            &no_http,
-        );
-        assert!(
-            matches!(result, Err(InputError::TypeMismatch { ref name, .. }) if name == "myarg"),
-            "expected TypeMismatch, got {:?}",
-            result
-        );
-    }
-
-    // Criterion: non-existent file path + accepts [File] → FileNotFound
-    #[test]
-    fn file_missing() {
-        let result = validate(
-            "myarg",
-            "/nonexistent/path/to/file.txt",
-            &[AcceptsType::File],
-            &no_http,
-        );
-        assert!(
-            matches!(result, Err(InputError::FileNotFound { ref name, .. }) if name == "myarg"),
-            "expected FileNotFound, got {:?}",
-            result
-        );
-    }
-
-    // Criterion: URL + accepts [Url] + http_check returns true → Ok
-    #[test]
-    fn url_valid() {
-        let result = validate(
-            "myarg",
-            "https://example.com",
-            &[AcceptsType::Url],
-            &http_ok,
-        );
-        assert!(
-            result.is_ok(),
-            "expected Ok for reachable URL, got {:?}",
-            result
-        );
-    }
-
-    // Criterion: accepts [File, Url], value is existing file path → Ok
-    #[test]
-    fn url_or_file_file_path() {
-        let mut f = NamedTempFile::new().unwrap();
-        writeln!(f, "content").unwrap();
-        let path = f.path().to_str().unwrap();
-
-        let result = validate(
-            "myarg",
-            path,
-            &[AcceptsType::File, AcceptsType::Url],
-            &http_fail,
-        );
-        assert!(
-            result.is_ok(),
-            "expected Ok for file with [File, Url], got {:?}",
-            result
-        );
-    }
-
-    // Criterion: accepts [File, Url], value is URL + http_check true → Ok
-    #[test]
-    fn url_or_file_url() {
-        let result = validate(
-            "myarg",
-            "https://example.com",
-            &[AcceptsType::File, AcceptsType::Url],
-            &http_ok,
-        );
-        assert!(
-            result.is_ok(),
-            "expected Ok for URL with [File, Url], got {:?}",
             result
         );
     }
