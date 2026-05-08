@@ -183,6 +183,20 @@ mod tests {
         );
     }
 
+    // Criterion 3: CommandNotFound error message is exactly the specified string
+    #[test]
+    fn command_not_found_exact_message() {
+        let err = WorkflowError::CommandNotFound {
+            command: "claude".to_string(),
+        };
+        let expected = "CLI 'claude' not found\n  \u{2192} Install Claude Code: https://docs.anthropic.com/en/docs/claude-code";
+        assert_eq!(
+            err.to_string(),
+            expected,
+            "error message must match exactly"
+        );
+    }
+
     // Criterion: check_command_available returns Ok for a binary that exists
     #[test]
     fn command_found() {
