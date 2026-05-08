@@ -19,8 +19,31 @@ fn main() -> Result<()> {
 
     match matches.subcommand() {
         Some(("setup", _)) => {
-            // TODO: delegate to setup handler
-            todo!()
+            let cfg = config.as_ref();
+            let plugin_statuses = if let Some(c) = cfg {
+                plugins::run_plugin_setup(&c.plugins, &plugins::read_installed_plugins, &|pkg| {
+                    let status = std::process::Command::new("npx")
+                        .args(["claude-plugins", "install", pkg])
+                        .status()?;
+                    if status.success() {
+                        Ok(())
+                    } else {
+                        Err(anyhow::anyhow!("npx exited with status {}", status))
+                    }
+                })
+            } else {
+                vec![]
+            };
+
+            let missing_skills = cfg.map(plugins::verify_skill_files).unwrap_or_default();
+
+            plugins::print_ready_summary(
+                cfg.is_some(),
+                true,
+                None,
+                &plugin_statuses,
+                &missing_skills,
+            );
         }
         Some((name, _)) => {
             // TODO: delegate to workflow step handler
