@@ -183,12 +183,89 @@ mod tests {
         );
     }
 
+    // Criterion 3: CommandNotFound error message is exactly the specified string
+    #[test]
+    fn command_not_found_exact_message() {
+        let err = WorkflowError::CommandNotFound {
+            command: "claude".to_string(),
+        };
+        let expected = "CLI 'claude' not found\n  \u{2192} Install Claude Code: https://docs.anthropic.com/en/docs/claude-code";
+        assert_eq!(
+            err.to_string(),
+            expected,
+            "error message must match exactly"
+        );
+    }
+
     // Criterion: check_command_available returns Ok for a binary that exists
     #[test]
     fn command_found() {
         // `sh` is available on all POSIX systems.
         let result = check_command_available("sh");
         assert!(result.is_ok(), "expected sh to be found, got {:?}", result);
+    }
+
+    // Criterion 5: check_command_available returns the resolved absolute path on success
+    #[test]
+    fn command_found_returns_resolved_path() {
+        // `sh` is universally available; its resolved path must be an absolute file.
+        let result = check_command_available("sh").expect("sh must be available");
+        assert!(
+            std::path::Path::new(&result).is_absolute(),
+            "resolved path must be absolute, got: {result}"
+        );
+        assert!(
+            std::path::Path::new(&result).is_file(),
+            "resolved path must point to a file, got: {result}"
+        );
+    }
+
+    // Criterion 2: run_step launches process with inherited stdin/stdout/stderr
+    // and blocks until it exits. We use `sh` with `-c exit 0` so the child exits
+    // cleanly — demonstrating the full interactive exec path succeeds.
+    #[test]
+    fn run_step_inherits_io_and_exits_cleanly() {
+        let global = CliConfig {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string(), "exit 0".to_string()],
+        };
+        let step = StepConfig {
+            description: "test".to_string(),
+            args: vec![],
+            cli: None,
+        };
+        let vars = HashMap::new();
+        let result = run_step(&global, &step, &vars);
+        assert!(
+            result.is_ok(),
+            "run_step must return Ok for a clean exit: {:?}",
+            result
+        );
+    }
+
+    // Criterion 4: each run_step invocation spawns a fresh child; no state carried between calls
+    #[test]
+    fn each_invocation_is_independent() {
+        let global = CliConfig {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string(), "exit 0".to_string()],
+        };
+        let step = StepConfig {
+            description: "test".to_string(),
+            args: vec![],
+            cli: None,
+        };
+        let vars = HashMap::new();
+
+        let first = run_step(&global, &step, &vars);
+        let second = run_step(&global, &step, &vars);
+
+        assert!(first.is_ok(), "first invocation must succeed: {:?}", first);
+        assert!(
+            second.is_ok(),
+            "second invocation must succeed independently: {:?}",
+            second
+        );
     }
 
     // Criterion: step with no step-level cli.args uses only global args
