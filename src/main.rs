@@ -11,12 +11,56 @@ mod plugins;
 mod workflow;
 
 use anyhow::Result;
+use config::ConfigError;
 
-fn main() -> Result<()> {
-    let config = config::load().ok();
+fn format_error(err: &anyhow::Error) -> String {
+    // Walk the error chain; the first level is the actionable message.
+    let msg = err.to_string();
+    if msg.contains('\n') {
+        // Error already contains hint lines (e.g. WorkflowError::CommandNotFound).
+        format!("error: {msg}")
+    } else {
+        format!("error: {msg}")
+    }
+}
+
+fn check_required_env(required: &[String]) -> Result<()> {
+    for var in required {
+        if std::env::var(var).is_err() {
+            let msg = format!(
+                "required environment variable '{var}' is not set\n  → Add to your shell profile: export {var}=your_key"
+            );
+            anyhow::bail!(msg);
+        }
+    }
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("{}", format_error(&e));
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
+    // Step 1: attempt config load (non-fatal on NotFound).
+    let config = match config::load() {
+        Ok(c) => Some(c),
+        Err(ConfigError::NotFound) => None,
+        Err(e) => anyhow::bail!(e),
+    };
+
+    // Step 2: build and parse the CLI.
     let cmd = cli::build_command(config.as_ref());
     let matches = cmd.get_matches();
 
+    // Step 3: check required_env when config is present.
+    if let Some(cfg) = &config {
+        check_required_env(&cfg.required_env)?;
+    }
+
+    // Step 4: dispatch.
     match matches.subcommand() {
         Some(("setup", _)) => {
             let cfg = config.as_ref();
@@ -28,7 +72,7 @@ fn main() -> Result<()> {
                     if status.success() {
                         Ok(())
                     } else {
-                        Err(anyhow::anyhow!("npx exited with status {}", status))
+                        anyhow::bail!("npx exited with status {}", status)
                     }
                 })
             } else {
@@ -37,24 +81,106 @@ fn main() -> Result<()> {
 
             let missing_skills = cfg.map(plugins::verify_skill_files).unwrap_or_default();
 
+            // Check if the CLI command is available.
+            let claude_version = cfg.and_then(|c| {
+                workflow::check_command_available(&c.cli.command)
+                    .ok()
+                    .and_then(|_| {
+                        std::process::Command::new(&c.cli.command)
+                            .arg("--version")
+                            .output()
+                            .ok()
+                    })
+                    .and_then(|out| String::from_utf8(out.stdout).ok())
+                    .map(|s| s.trim().to_string())
+            });
+
             plugins::print_ready_summary(
                 cfg.is_some(),
                 true,
-                None,
+                claude_version.as_deref(),
                 &plugin_statuses,
                 &missing_skills,
             );
         }
-        Some((name, _)) => {
-            // TODO: delegate to workflow step handler
-            eprintln!("Running step: {name}");
-            todo!()
+        Some((name, step_matches)) => {
+            let cfg = config
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("no ywflow.yaml found"))?;
+
+            let step = cfg
+                .workflow
+                .get(name)
+                .ok_or_else(|| anyhow::anyhow!("unknown step: {name}"))?;
+
+            // Collect argument values from clap matches.
+            let mut raw_args: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            for arg in &step.args {
+                if let Some(val) = step_matches.get_one::<String>(&arg.name) {
+                    // Validate the argument type.
+                    input::validate(&arg.name, val, &arg.accepts, &input::http_head_check)
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    raw_args.insert(arg.name.clone(), val.clone());
+                } else if !arg.required {
+                    // Optional arg absent → empty string so ${name} expands cleanly.
+                    raw_args.insert(arg.name.clone(), String::new());
+                }
+            }
+
+            // Resolve the full variable map.
+            let resolved =
+                context::resolve(cfg, name, &raw_args).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            // Launch the step.
+            workflow::run_step(&cfg.cli, step, &resolved).map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         None => {
-            // No subcommand given; print help
             cli::build_command(config.as_ref()).print_help()?;
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_error_has_lowercase_prefix() {
+        let err = anyhow::anyhow!("something went wrong");
+        let msg = format_error(&err);
+        assert!(
+            msg.starts_with("error:"),
+            "expected 'error:' prefix, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn missing_required_env_message() {
+        // Use a var name guaranteed not to be set in the test environment.
+        let var = "YWFLOW_TEST_MISSING_VAR_XYZ";
+        unsafe {
+            std::env::remove_var(var);
+        }
+        let result = check_required_env(&[var.to_string()]);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains(var),
+            "error message should name the missing var: {msg}"
+        );
+        assert!(
+            msg.contains("→"),
+            "error message should include a hint: {msg}"
+        );
+    }
+
+    #[test]
+    fn present_required_env_ok() {
+        let var = "PATH"; // Always set.
+        let result = check_required_env(&[var.to_string()]);
+        assert!(result.is_ok());
+    }
 }
