@@ -326,6 +326,137 @@ workflow:
     }
 
     #[test]
+    fn repo_ywflow_yaml_at_repo_root() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let yaml_path = manifest_dir.join("ywflow.yaml");
+        assert!(
+            yaml_path.exists(),
+            "ywflow.yaml must exist at the repository root ({}), not under docs/ or src/",
+            yaml_path.display()
+        );
+        // Confirm it is NOT nested under docs/ or src/
+        let under_docs = manifest_dir.join("docs").join("ywflow.yaml").exists();
+        let under_src = manifest_dir.join("src").join("ywflow.yaml").exists();
+        assert!(!under_docs, "ywflow.yaml must not be under docs/");
+        assert!(!under_src, "ywflow.yaml must not be under src/");
+    }
+
+    #[test]
+    fn repo_ywflow_yaml_workflow_step_shapes() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let yaml_path = manifest_dir.join("ywflow.yaml");
+        if !yaml_path.exists() {
+            return;
+        }
+        let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
+        let config = parse_and_validate(&content).unwrap();
+
+        // plan: no args
+        let plan = config.workflow.get("plan").expect("plan step must exist");
+        assert!(
+            plan.args.is_empty(),
+            "plan step must have no args, found: {:?}",
+            plan.args
+        );
+
+        // breakdown: exactly one required arg accepting file or url
+        let breakdown = config
+            .workflow
+            .get("breakdown")
+            .expect("breakdown step must exist");
+        assert_eq!(
+            breakdown.args.len(),
+            1,
+            "breakdown must have exactly one arg"
+        );
+        let bd_arg = &breakdown.args[0];
+        assert!(bd_arg.required, "breakdown arg must be required");
+        let accepts_file = bd_arg.accepts.contains(&AcceptsType::File);
+        let accepts_url = bd_arg.accepts.contains(&AcceptsType::Url);
+        assert!(
+            accepts_file || accepts_url,
+            "breakdown arg must accept file or url"
+        );
+
+        // execute: one required arg followed by one optional arg
+        let execute = config
+            .workflow
+            .get("execute")
+            .expect("execute step must exist");
+        assert_eq!(execute.args.len(), 2, "execute must have exactly two args");
+        assert!(
+            execute.args[0].required,
+            "execute first arg must be required"
+        );
+        assert!(
+            !execute.args[1].required,
+            "execute second arg must be optional"
+        );
+    }
+
+    #[test]
+    fn repo_ywflow_yaml_plugins_has_marketplace_and_local() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let yaml_path = manifest_dir.join("ywflow.yaml");
+        if !yaml_path.exists() {
+            return;
+        }
+        let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
+        let config = parse_and_validate(&content).unwrap();
+        let has_marketplace = config
+            .plugins
+            .iter()
+            .any(|p| p.source == PluginSource::Marketplace);
+        let has_local = config
+            .plugins
+            .iter()
+            .any(|p| p.source == PluginSource::Local);
+        assert!(
+            has_marketplace,
+            "ywflow.yaml plugins must include at least one marketplace plugin"
+        );
+        assert!(
+            has_local,
+            "ywflow.yaml plugins must include at least one local plugin"
+        );
+    }
+
+    #[test]
+    fn repo_ywflow_yaml_cli_has_command_and_args() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let yaml_path = manifest_dir.join("ywflow.yaml");
+        if !yaml_path.exists() {
+            return;
+        }
+        let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
+        let config = parse_and_validate(&content).unwrap();
+        assert!(
+            !config.cli.command.is_empty(),
+            "ywflow.yaml cli must specify a command"
+        );
+        assert!(
+            !config.cli.args.is_empty(),
+            "ywflow.yaml cli must specify at least one global arg"
+        );
+    }
+
+    #[test]
+    fn repo_ywflow_yaml_context_has_env_expansion() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let yaml_path = manifest_dir.join("ywflow.yaml");
+        if !yaml_path.exists() {
+            return;
+        }
+        let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
+        let config = parse_and_validate(&content).unwrap();
+        let has_env_expansion = config.context.values().any(|v| v.contains("${env:"));
+        assert!(
+            has_env_expansion,
+            "ywflow.yaml context must have at least one value using ${{env:...}} expansion"
+        );
+    }
+
+    #[test]
     fn repo_ywflow_yaml_parses() {
         // Locate the ywflow.yaml committed to the repo root (two levels up from src/).
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
