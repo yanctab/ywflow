@@ -28,17 +28,22 @@ pub fn validate(
     accepts: &[AcceptsType],
     http_check: &dyn Fn(&str) -> bool,
 ) -> Result<(), InputError> {
-    let _ = http_check;
     if accepts.is_empty() {
         return Ok(());
     }
     let is_url = value.starts_with("http://") || value.starts_with("https://");
     for accept in accepts {
-        if let AcceptsType::File = accept
-            && !is_url
-            && std::path::Path::new(value).is_file()
-        {
-            return Ok(());
+        match accept {
+            AcceptsType::File => {
+                if !is_url && std::path::Path::new(value).is_file() {
+                    return Ok(());
+                }
+            }
+            AcceptsType::Url => {
+                if is_url && http_check(value) {
+                    return Ok(());
+                }
+            }
         }
     }
     let accepts_str = accepts
@@ -76,6 +81,26 @@ mod tests {
 
     fn no_http(_url: &str) -> bool {
         panic!("http_check must not be called for file-only tests")
+    }
+
+    fn http_ok(_url: &str) -> bool {
+        true
+    }
+
+    // Criterion 4: URL + accepts [Url] + http_check returns true → Ok
+    #[test]
+    fn url_valid() {
+        let result = validate(
+            "myarg",
+            "https://example.com",
+            &[AcceptsType::Url],
+            &http_ok,
+        );
+        assert!(
+            result.is_ok(),
+            "expected Ok for reachable URL, got {:?}",
+            result
+        );
     }
 
     // Criterion 3: non-existent file path + accepts [File] → FileNotFound
