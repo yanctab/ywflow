@@ -24,6 +24,24 @@ fn format_error(err: &anyhow::Error) -> String {
     }
 }
 
+/// Steps 1 and 2 of the startup sequence:
+/// 1. Load config from `start` dir (NotFound → Ok(None), other errors → Err).
+/// 2. If config present: check required_env entries.
+///
+/// Returns `Ok(Some(config))` when config exists and all required env vars are set,
+/// `Ok(None)` when no config file is found, or `Err(...)` for any fatal condition.
+fn startup_init(start: &std::path::Path) -> Result<Option<config::Config>> {
+    let config = match config::load_from(start) {
+        Ok(c) => Some(c),
+        Err(ConfigError::NotFound) => None,
+        Err(e) => anyhow::bail!(e),
+    };
+    if let Some(cfg) = &config {
+        check_required_env(&cfg.required_env)?;
+    }
+    Ok(config)
+}
+
 fn check_required_env(required: &[String]) -> Result<()> {
     for var in required {
         if std::env::var(var).is_err() {
@@ -44,21 +62,14 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    // Step 1: attempt config load (non-fatal on NotFound).
-    let config = match config::load() {
-        Ok(c) => Some(c),
-        Err(ConfigError::NotFound) => None,
-        Err(e) => anyhow::bail!(e),
-    };
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-    // Step 2: build and parse the CLI.
+    // Steps 1+2: load config and check required env vars (before CLI parsing).
+    let config = startup_init(&cwd)?;
+
+    // Step 3: build and parse the CLI.
     let cmd = cli::build_command(config.as_ref());
     let matches = cmd.get_matches();
-
-    // Step 3: check required_env when config is present.
-    if let Some(cfg) = &config {
-        check_required_env(&cfg.required_env)?;
-    }
 
     // Step 4: dispatch.
     match matches.subcommand() {
@@ -182,5 +193,112 @@ mod tests {
         let var = "PATH"; // Always set.
         let result = check_required_env(&[var.to_string()]);
         assert!(result.is_ok());
+    }
+
+    /// Criterion 1: exact error message (with "error:" prefix) for missing required env var.
+    #[test]
+    fn missing_required_env_exact_message() {
+        let var = "ANTHROPIC_API_KEY";
+        unsafe {
+            std::env::remove_var(var);
+        }
+        let result = check_required_env(&[var.to_string()]);
+        assert!(result.is_err());
+        let formatted = format_error(&result.unwrap_err());
+        let expected = "error: required environment variable 'ANTHROPIC_API_KEY' is not set\n  → Add to your shell profile: export ANTHROPIC_API_KEY=your_key";
+        assert_eq!(
+            formatted, expected,
+            "formatted error message did not match expected.\nGot:      {formatted:?}\nExpected: {expected:?}"
+        );
+    }
+
+    /// Test case 4: format_error with WorkflowError::CommandNotFound produces exact PRD string.
+    #[test]
+    fn error_format_with_hint() {
+        let err: anyhow::Error = workflow::WorkflowError::CommandNotFound {
+            command: "claude".to_string(),
+        }
+        .into();
+        let formatted = format_error(&err);
+        let expected = "error: CLI 'claude' not found\n  → Install Claude Code: https://docs.anthropic.com/en/docs/claude-code";
+        assert_eq!(
+            formatted, expected,
+            "formatted error did not match PRD string.\nGot:      {formatted:?}\nExpected: {expected:?}"
+        );
+    }
+
+    /// Test case 2: no ywflow.yaml present → startup continues without error (non-fatal).
+    #[test]
+    fn config_not_found_nonfatal() {
+        use tempfile::TempDir;
+        let tmp = TempDir::new().unwrap();
+        // No ywflow.yaml in tmp — startup_init should return Ok(None).
+        let result = startup_init(tmp.path());
+        assert!(
+            result.is_ok(),
+            "config not found should be non-fatal, got: {:?}",
+            result
+        );
+        assert!(
+            result.unwrap().is_none(),
+            "config not found should return None"
+        );
+    }
+
+    /// Test case 3: malformed YAML present → startup_init returns Err, and format_error
+    /// produces a message with the lowercase "error:" prefix.
+    #[test]
+    fn other_config_error_fatal() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        // Write an intentionally malformed ywflow.yaml.
+        fs::write(tmp.path().join("ywflow.yaml"), b": : invalid yaml {{{{").unwrap();
+
+        let result = startup_init(tmp.path());
+        assert!(
+            result.is_err(),
+            "malformed YAML should be a fatal error, got Ok"
+        );
+        let formatted = format_error(&result.unwrap_err());
+        assert!(
+            formatted.starts_with("error:"),
+            "fatal config error must produce a lowercase 'error:' prefix, got: {formatted:?}"
+        );
+    }
+
+    /// Criterion 4: clap "derive" feature is absent from Cargo.toml; binary compiles.
+    #[test]
+    fn clap_derive_feature_absent() {
+        let cargo_toml = include_str!("../Cargo.toml");
+        // Locate the clap dependency line and assert "derive" is not in its features.
+        let clap_line = cargo_toml
+            .lines()
+            .find(|l| l.contains("clap"))
+            .expect("Cargo.toml must contain a clap dependency");
+        assert!(
+            !clap_line.contains("derive"),
+            "clap must not have the 'derive' feature; found: {clap_line:?}"
+        );
+    }
+
+    /// Criterion 5: reqwest uses rustls-tls with default-features = false so the
+    /// musl binary has no dynamic libc dependency on OpenSSL.
+    #[test]
+    fn reqwest_uses_rustls_not_openssl() {
+        let cargo_toml = include_str!("../Cargo.toml");
+        let reqwest_line = cargo_toml
+            .lines()
+            .find(|l| l.contains("reqwest"))
+            .expect("Cargo.toml must contain a reqwest dependency");
+        assert!(
+            reqwest_line.contains("rustls-tls"),
+            "reqwest must use rustls-tls (not native OpenSSL) for static musl builds; found: {reqwest_line:?}"
+        );
+        assert!(
+            reqwest_line.contains("default-features = false"),
+            "reqwest must have default-features = false to avoid pulling in native TLS; found: {reqwest_line:?}"
+        );
     }
 }
