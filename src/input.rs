@@ -1,8 +1,6 @@
 // src/input.rs
 // Argument type validation — checks each step arg value against its declared accepts list.
 
-#![allow(dead_code)]
-
 use crate::config::AcceptsType;
 use thiserror::Error;
 
@@ -97,18 +95,65 @@ mod tests {
         false
     }
 
-    // Criterion 6: accepts [File, Url], value is URL + http_check true → Ok
+    // Criterion 1: existing file path + accepts [File] → Ok
     #[test]
-    fn url_or_file_url() {
+    fn file_valid() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, "content").unwrap();
+        let path = f.path().to_str().unwrap();
+
+        let result = validate("myarg", path, &[AcceptsType::File], &no_http);
+        assert!(
+            result.is_ok(),
+            "expected Ok for existing file, got {:?}",
+            result
+        );
+    }
+
+    // Criterion 2: URL string + accepts [File] only → TypeMismatch
+    #[test]
+    fn file_url_rejected() {
+        let result = validate(
+            "myarg",
+            "https://example.com/spec.html",
+            &[AcceptsType::File],
+            &no_http,
+        );
+        assert!(
+            matches!(result, Err(InputError::TypeMismatch { ref name, .. }) if name == "myarg"),
+            "expected TypeMismatch, got {:?}",
+            result
+        );
+    }
+
+    // Criterion 3: non-existent file path + accepts [File] → FileNotFound
+    #[test]
+    fn file_missing() {
+        let result = validate(
+            "myarg",
+            "/nonexistent/path/to/file.txt",
+            &[AcceptsType::File],
+            &no_http,
+        );
+        assert!(
+            matches!(result, Err(InputError::FileNotFound { ref name, .. }) if name == "myarg"),
+            "expected FileNotFound, got {:?}",
+            result
+        );
+    }
+
+    // Criterion 4: URL + accepts [Url] + http_check returns true → Ok
+    #[test]
+    fn url_valid() {
         let result = validate(
             "myarg",
             "https://example.com",
-            &[AcceptsType::File, AcceptsType::Url],
+            &[AcceptsType::Url],
             &http_ok,
         );
         assert!(
             result.is_ok(),
-            "expected Ok for URL with [File, Url], got {:?}",
+            "expected Ok for reachable URL, got {:?}",
             result
         );
     }
@@ -133,65 +178,18 @@ mod tests {
         );
     }
 
-    // Criterion 4: URL + accepts [Url] + http_check returns true → Ok
+    // Criterion 6: accepts [File, Url], value is URL + http_check true → Ok
     #[test]
-    fn url_valid() {
+    fn url_or_file_url() {
         let result = validate(
             "myarg",
             "https://example.com",
-            &[AcceptsType::Url],
+            &[AcceptsType::File, AcceptsType::Url],
             &http_ok,
         );
         assert!(
             result.is_ok(),
-            "expected Ok for reachable URL, got {:?}",
-            result
-        );
-    }
-
-    // Criterion 3: non-existent file path + accepts [File] → FileNotFound
-    #[test]
-    fn file_missing() {
-        let result = validate(
-            "myarg",
-            "/nonexistent/path/to/file.txt",
-            &[AcceptsType::File],
-            &no_http,
-        );
-        assert!(
-            matches!(result, Err(InputError::FileNotFound { ref name, .. }) if name == "myarg"),
-            "expected FileNotFound, got {:?}",
-            result
-        );
-    }
-
-    // Criterion 2: URL string + accepts [File] only → TypeMismatch
-    #[test]
-    fn file_url_rejected() {
-        let result = validate(
-            "myarg",
-            "https://example.com/spec.html",
-            &[AcceptsType::File],
-            &no_http,
-        );
-        assert!(
-            matches!(result, Err(InputError::TypeMismatch { ref name, .. }) if name == "myarg"),
-            "expected TypeMismatch, got {:?}",
-            result
-        );
-    }
-
-    // Criterion 1: existing file path + accepts [File] → Ok
-    #[test]
-    fn file_valid() {
-        let mut f = NamedTempFile::new().unwrap();
-        writeln!(f, "content").unwrap();
-        let path = f.path().to_str().unwrap();
-
-        let result = validate("myarg", path, &[AcceptsType::File], &no_http);
-        assert!(
-            result.is_ok(),
-            "expected Ok for existing file, got {:?}",
+            "expected Ok for URL with [File, Url], got {:?}",
             result
         );
     }
