@@ -244,4 +244,27 @@ mod tests {
             "config not found should return None"
         );
     }
+
+    /// Test case 3: malformed YAML present → startup_init returns Err, and format_error
+    /// produces a message with the lowercase "error:" prefix.
+    #[test]
+    fn other_config_error_fatal() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        // Write an intentionally malformed ywflow.yaml.
+        fs::write(tmp.path().join("ywflow.yaml"), b": : invalid yaml {{{{").unwrap();
+
+        let result = startup_init(tmp.path());
+        assert!(
+            result.is_err(),
+            "malformed YAML should be a fatal error, got Ok"
+        );
+        let formatted = format_error(&result.unwrap_err());
+        assert!(
+            formatted.starts_with("error:"),
+            "fatal config error must produce a lowercase 'error:' prefix, got: {formatted:?}"
+        );
+    }
 }
