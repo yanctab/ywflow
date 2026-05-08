@@ -205,6 +205,21 @@ mod tests {
         assert!(result.is_ok(), "expected sh to be found, got {:?}", result);
     }
 
+    // Criterion 5: check_command_available returns the resolved absolute path on success
+    #[test]
+    fn command_found_returns_resolved_path() {
+        // `sh` is universally available; its resolved path must be an absolute file.
+        let result = check_command_available("sh").expect("sh must be available");
+        assert!(
+            std::path::Path::new(&result).is_absolute(),
+            "resolved path must be absolute, got: {result}"
+        );
+        assert!(
+            std::path::Path::new(&result).is_file(),
+            "resolved path must point to a file, got: {result}"
+        );
+    }
+
     // Criterion: step with no step-level cli.args uses only global args
     #[test]
     fn no_step_args_uses_only_global() {
