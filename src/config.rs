@@ -430,6 +430,94 @@ workflow:
     }
 
     #[test]
+    fn step_cli_args_with_reserved_cwd_token_passes_validation() {
+        let yaml = r#"
+cli:
+  command: claude
+workflow:
+  plan:
+    description: "Plan"
+    cli:
+      args:
+        - --workdir
+        - ${cwd}
+"#;
+        let result = parse_and_validate(yaml);
+        assert!(
+            result.is_ok(),
+            "expected Ok for reserved token ${{cwd}}, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn step_cli_args_with_env_token_passes_validation() {
+        let yaml = r#"
+cli:
+  command: claude
+workflow:
+  plan:
+    description: "Plan"
+    cli:
+      args:
+        - --token
+        - ${env:MY_VAR}
+"#;
+        let result = parse_and_validate(yaml);
+        assert!(
+            result.is_ok(),
+            "expected Ok for env-prefixed token, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn global_cli_args_with_undeclared_token_does_not_trigger_error() {
+        let yaml = r#"
+cli:
+  command: claude
+  args:
+    - --flag
+    - ${undeclared_global}
+workflow:
+  plan:
+    description: "Plan"
+"#;
+        let result = parse_and_validate(yaml);
+        assert!(
+            result.is_ok(),
+            "expected Ok for undeclared token in global cli.args, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn undeclared_cli_arg_token_error_formats_human_readable_message() {
+        let err = ConfigError::UndeclaredCliArgToken {
+            step: "plan".to_string(),
+            token: "undeclared".to_string(),
+            declared: vec!["task".to_string(), "url".to_string()],
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("plan"),
+            "message should contain step name 'plan': {msg}"
+        );
+        assert!(
+            msg.contains("undeclared"),
+            "message should contain bad token 'undeclared': {msg}"
+        );
+        assert!(
+            msg.contains("task"),
+            "message should contain declared arg 'task': {msg}"
+        );
+        assert!(
+            msg.contains("url"),
+            "message should contain declared arg 'url': {msg}"
+        );
+    }
+
+    #[test]
     fn accepts_type_string_deserialises_from_yaml_token() {
         let yaml = r#"
 cli:
