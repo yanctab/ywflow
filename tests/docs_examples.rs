@@ -1,11 +1,25 @@
 // tests/docs_examples.rs
 // Integration tests verifying the docs/examples/ documentation files exist
 // and contain the required content per issue #29 acceptance criteria.
+// Also covers docs/config.md content requirements per issue #39.
 
 use std::path::PathBuf;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+// ── Issue #39 AC4: docs/config.md lists "string" as a valid accepts token ────
+
+#[test]
+fn config_md_accepts_field_lists_string_token() {
+    let path = repo_root().join("docs/config.md");
+    let content = std::fs::read_to_string(&path)
+        .unwrap_or_else(|_| panic!("docs/config.md must be readable at {:?}", path));
+    assert!(
+        content.contains("\"string\"") || content.contains("`string`"),
+        "docs/config.md accepts field documentation must list \"string\" as a valid token"
+    );
 }
 
 // ── Criterion 1 ──────────────────────────────────────────────────────────────
