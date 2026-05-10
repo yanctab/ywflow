@@ -42,6 +42,26 @@ fn startup_init(start: &std::path::Path) -> Result<Option<config::Config>> {
     Ok(config)
 }
 
+/// Collects raw argument values for a step using the provided lookup function.
+/// Only inserts an entry when the argument is actually provided (lookup returns Some).
+/// Absent optional args are simply omitted from the returned map.
+fn build_raw_args<F>(
+    args: &[config::StepArg],
+    lookup: F,
+) -> std::collections::HashMap<String, String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let mut raw_args: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for arg in args {
+        if let Some(val) = lookup(&arg.name) {
+            raw_args.insert(arg.name.clone(), val);
+        }
+        // Absent optional args are simply omitted; no empty-string fallback.
+    }
+    raw_args
+}
+
 fn check_required_env(required: &[String]) -> Result<()> {
     for var in required {
         if std::env::var(var).is_err() {
@@ -124,20 +144,17 @@ fn run() -> Result<()> {
                 .get(name)
                 .ok_or_else(|| anyhow::anyhow!("unknown step: {name}"))?;
 
-            // Collect argument values from clap matches.
-            let mut raw_args: std::collections::HashMap<String, String> =
-                std::collections::HashMap::new();
+            // Validate provided args, then collect raw argument values from clap matches.
+            // Absent optional args are simply omitted from raw_args.
             for arg in &step.args {
                 if let Some(val) = step_matches.get_one::<String>(&arg.name) {
-                    // Validate the argument type.
                     input::validate(&arg.name, val, &arg.accepts, &input::http_head_check)
                         .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    raw_args.insert(arg.name.clone(), val.clone());
-                } else if !arg.required {
-                    // Optional arg absent → empty string so ${name} expands cleanly.
-                    raw_args.insert(arg.name.clone(), String::new());
                 }
             }
+            let raw_args = build_raw_args(&step.args, |name| {
+                step_matches.get_one::<String>(name).cloned()
+            });
 
             // Resolve the full variable map.
             let resolved =
@@ -280,6 +297,76 @@ mod tests {
         assert!(
             !clap_line.contains("derive"),
             "clap must not have the 'derive' feature; found: {clap_line:?}"
+        );
+    }
+
+    /// Criterion 1: absent optional arg is NOT inserted into raw_args (no empty-string entry).
+    #[test]
+    fn absent_optional_arg_not_in_raw_args() {
+        use config::{AcceptsType, StepArg};
+        // Simulate: one required arg (provided) and one optional arg (absent).
+        let args = vec![
+            StepArg {
+                name: "task".to_string(),
+                accepts: vec![AcceptsType::String],
+                required: true,
+                help: "task help".to_string(),
+            },
+            StepArg {
+                name: "notes".to_string(),
+                accepts: vec![],
+                required: false,
+                help: "optional notes".to_string(),
+            },
+        ];
+        // Provide "task" but not "notes".
+        let provided: std::collections::HashMap<String, String> =
+            [("task".to_string(), "do_work".to_string())].into();
+        let raw_args = build_raw_args(&args, |name| provided.get(name).cloned());
+        assert!(
+            !raw_args.contains_key("notes"),
+            "absent optional arg 'notes' must not be in raw_args, got: {:?}",
+            raw_args
+        );
+    }
+
+    /// Criterion 2: provided required arg IS inserted into raw_args.
+    #[test]
+    fn provided_required_arg_is_in_raw_args() {
+        use config::{AcceptsType, StepArg};
+        let args = vec![StepArg {
+            name: "task".to_string(),
+            accepts: vec![AcceptsType::String],
+            required: true,
+            help: "task help".to_string(),
+        }];
+        let provided: std::collections::HashMap<String, String> =
+            [("task".to_string(), "do_work".to_string())].into();
+        let raw_args = build_raw_args(&args, |name| provided.get(name).cloned());
+        assert_eq!(
+            raw_args.get("task"),
+            Some(&"do_work".to_string()),
+            "provided required arg must be in raw_args"
+        );
+    }
+
+    /// Criterion 4: provided optional arg IS inserted into raw_args.
+    #[test]
+    fn provided_optional_arg_is_in_raw_args() {
+        use config::StepArg;
+        let args = vec![StepArg {
+            name: "notes".to_string(),
+            accepts: vec![],
+            required: false,
+            help: "optional notes".to_string(),
+        }];
+        let provided: std::collections::HashMap<String, String> =
+            [("notes".to_string(), "some notes".to_string())].into();
+        let raw_args = build_raw_args(&args, |name| provided.get(name).cloned());
+        assert_eq!(
+            raw_args.get("notes"),
+            Some(&"some notes".to_string()),
+            "provided optional arg must still be in raw_args"
         );
     }
 
