@@ -347,29 +347,10 @@ workflow:
     }
 
     #[test]
-    fn repo_ywflow_yaml_at_repo_root() {
-        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let yaml_path = manifest_dir.join("ywflow.yaml");
-        assert!(
-            yaml_path.exists(),
-            "ywflow.yaml must exist at the repository root ({}), not under docs/ or src/",
-            yaml_path.display()
-        );
-        // Confirm it is NOT nested under docs/ or src/
-        let under_docs = manifest_dir.join("docs").join("ywflow.yaml").exists();
-        let under_src = manifest_dir.join("src").join("ywflow.yaml").exists();
-        assert!(!under_docs, "ywflow.yaml must not be under docs/");
-        assert!(!under_src, "ywflow.yaml must not be under src/");
-    }
-
-    #[test]
     fn repo_ywflow_yaml_workflow_step_shapes() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let yaml_path = manifest_dir.join("ywflow.yaml");
-        if !yaml_path.exists() {
-            return;
-        }
-        let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
+        let yaml_path = manifest_dir.join("tests/assets/ywflow.yaml");
+        let content = fs::read_to_string(&yaml_path).expect("read tests/assets/ywflow.yaml");
         let config = parse_and_validate(&content).unwrap();
 
         // plan: exactly one required arg accepting string
@@ -432,11 +413,8 @@ workflow:
     #[test]
     fn repo_ywflow_yaml_plugins_has_local() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let yaml_path = manifest_dir.join("ywflow.yaml");
-        if !yaml_path.exists() {
-            return;
-        }
-        let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
+        let yaml_path = manifest_dir.join("tests/assets/ywflow.yaml");
+        let content = fs::read_to_string(&yaml_path).expect("read tests/assets/ywflow.yaml");
         let config = parse_and_validate(&content).unwrap();
         let has_local = config
             .plugins
@@ -451,11 +429,8 @@ workflow:
     #[test]
     fn repo_ywflow_yaml_cli_has_command() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let yaml_path = manifest_dir.join("ywflow.yaml");
-        if !yaml_path.exists() {
-            return;
-        }
-        let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
+        let yaml_path = manifest_dir.join("tests/assets/ywflow.yaml");
+        let content = fs::read_to_string(&yaml_path).expect("read tests/assets/ywflow.yaml");
         let config = parse_and_validate(&content).unwrap();
         assert!(
             !config.cli.command.is_empty(),
@@ -466,11 +441,8 @@ workflow:
     #[test]
     fn repo_ywflow_yaml_context_has_entries() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let yaml_path = manifest_dir.join("ywflow.yaml");
-        if !yaml_path.exists() {
-            return;
-        }
-        let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
+        let yaml_path = manifest_dir.join("tests/assets/ywflow.yaml");
+        let content = fs::read_to_string(&yaml_path).expect("read tests/assets/ywflow.yaml");
         let config = parse_and_validate(&content).unwrap();
         assert!(
             config.context.len() >= 2,
@@ -480,18 +452,13 @@ workflow:
 
     #[test]
     fn repo_ywflow_yaml_parses() {
-        // Locate the ywflow.yaml committed to the repo root (two levels up from src/).
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let yaml_path = manifest_dir.join("ywflow.yaml");
-        if !yaml_path.exists() {
-            // Acceptable when running outside the repo tree.
-            return;
-        }
-        let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
+        let yaml_path = manifest_dir.join("tests/assets/ywflow.yaml");
+        let content = fs::read_to_string(&yaml_path).expect("read tests/assets/ywflow.yaml");
         let result = parse_and_validate(&content);
         assert!(
             result.is_ok(),
-            "ywflow.yaml at repo root must parse without errors: {:?}",
+            "tests/assets/ywflow.yaml must parse without errors: {:?}",
             result
         );
         let config = result.unwrap();
