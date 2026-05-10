@@ -69,6 +69,10 @@ The file recognises five top-level keys:
     block. The step-level `cli.args` are appended after the global
     `cli.args`; they do not replace them.
 
+    Each step arg may include an **accepts** field to constrain the type
+    of input it accepts. Valid tokens are `"file"`, `"url"`, and
+    `"string"`. An empty `accepts` list (the default) accepts any value.
+
 ## Variable expansion
 
 Variable expansion uses three passes applied in order:
@@ -119,10 +123,10 @@ error.
 
 # EXAMPLES
 
-Run the planning step (no arguments):
+Run the planning step with a task description:
 
 ```
-ywflow plan
+ywflow plan "my task"
 ```
 
 Break down a PRD file into implementation slices:

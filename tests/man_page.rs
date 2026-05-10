@@ -276,3 +276,55 @@ fn man_page_has_title_block() {
         "man page markdown must start with pandoc title block (% ...)"
     );
 }
+
+// ── Issue #43 AC1: CONFIGURATION section lists "string" as a valid accepts token ─
+
+#[test]
+fn configuration_section_lists_string_as_valid_accepts_token() {
+    let content = man_page();
+    // Find the CONFIGURATION section
+    let config_pos = content
+        .find("# CONFIGURATION")
+        .expect("CONFIGURATION section must exist");
+    // Find end of CONFIGURATION section (next top-level # heading)
+    let after_config = &content[config_pos..];
+    let next_section_offset = after_config[1..]
+        .find("\n# ")
+        .map(|i| i + 1)
+        .unwrap_or(after_config.len());
+    let config_section = &after_config[..next_section_offset];
+    // "string" must appear as a valid accepts token alongside "file" and "url"
+    assert!(
+        config_section.contains("\"string\"") || config_section.contains("`string`"),
+        "CONFIGURATION section must list \"string\" as a valid accepts token"
+    );
+}
+
+// ── Issue #43 AC2: EXAMPLES section shows ywflow plan "my task" ───────────────
+
+#[test]
+fn examples_shows_plan_with_my_task_argument() {
+    let content = man_page();
+    // The EXAMPLES section must show ywflow plan "my task" not argumentless ywflow plan
+    assert!(
+        content.contains("ywflow plan \"my task\""),
+        "EXAMPLES must show 'ywflow plan \"my task\"' with a quoted argument"
+    );
+}
+
+#[test]
+fn examples_does_not_show_argumentless_plan() {
+    let content = man_page();
+    // The argumentless "ywflow plan" (alone on a line) must not appear in EXAMPLES
+    // It is acceptable as part of a larger string like 'ywflow plan "my task"'
+    // Check that there is no line that is just "ywflow plan" (with no argument after it)
+    let lines_with_plan: Vec<&str> = content
+        .lines()
+        .filter(|l| l.trim() == "ywflow plan")
+        .collect();
+    assert!(
+        lines_with_plan.is_empty(),
+        "EXAMPLES must not show argumentless 'ywflow plan' on its own line; found: {:?}",
+        lines_with_plan
+    );
+}
