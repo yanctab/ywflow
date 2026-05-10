@@ -163,6 +163,35 @@ mod tests {
     }
 
     #[test]
+    fn plan_without_task_arg_reports_missing_task() {
+        // Criterion 4: `ywflow plan` (no argument) must exit with a clap usage
+        // error that references the missing `task` argument.
+        use crate::config;
+        use std::fs;
+
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let yaml_path = manifest_dir.join("ywflow.yaml");
+        if !yaml_path.exists() {
+            return;
+        }
+        let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
+        let cfg = config::parse_and_validate(&content).expect("ywflow.yaml must parse");
+
+        let cmd = build_command(Some(&cfg));
+        let result = cmd.try_get_matches_from(["ywflow", "plan"]);
+        assert!(
+            result.is_err(),
+            "`ywflow plan` with no args must produce a clap error"
+        );
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("task"),
+            "`ywflow plan` error must reference the 'task' argument, got: {msg:?}"
+        );
+    }
+
+    #[test]
     fn two_arg_step_has_indices_one_and_two() {
         use crate::config::StepArg;
 

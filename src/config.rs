@@ -381,10 +381,16 @@ workflow:
             plan.args
         );
         let plan_arg = &plan.args[0];
+        assert_eq!(
+            plan_arg.name, "task",
+            "plan arg must be named 'task', found: {:?}",
+            plan_arg.name
+        );
         assert!(plan_arg.required, "plan arg must be required");
-        assert!(
-            plan_arg.accepts.contains(&AcceptsType::String),
-            "plan arg must accept string, found: {:?}",
+        assert_eq!(
+            plan_arg.accepts,
+            vec![AcceptsType::String],
+            "plan arg must accept exactly [string], found: {:?}",
             plan_arg.accepts
         );
 
