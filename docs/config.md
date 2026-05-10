@@ -107,7 +107,7 @@ Each `StepArg` defines one positional argument for a workflow step.
 | Field     | Type          | Required | Purpose |
 |-----------|---------------|----------|---------|
 | `name`    | `String`      | Required | Argument name; also used as the variable name in context expansion. |
-| `accepts` | `Vec<String>` | Optional (default: `[]`) | Input type constraints. Possible values: `[]` (any string), `["file"]`, `["url"]`, or `["file", "url"]`. |
+| `accepts` | `Vec<String>` | Optional (default: `[]`) | Input type constraints. Possible values: `[]` (any string), `["file"]`, `["url"]`, `["string"]`, or any combination such as `["file", "url"]`. |
 | `required`| `bool`        | Required | Whether the argument must be supplied. |
 | `help`    | `String`      | Required | Help text shown in usage output. |
 
@@ -116,6 +116,8 @@ Each `StepArg` defines one positional argument for a workflow step.
 ```yaml
 args:
   - name: task
+    accepts:
+      - string
     required: true
     help: "The task to execute"
   - name: reference

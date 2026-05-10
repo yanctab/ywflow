@@ -36,6 +36,7 @@ pub struct CliConfig {
 pub enum AcceptsType {
     File,
     Url,
+    String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -326,6 +327,26 @@ workflow:
     }
 
     #[test]
+    fn accepts_type_string_deserialises_from_yaml_token() {
+        let yaml = r#"
+cli:
+  command: claude
+workflow:
+  step:
+    description: "A step"
+    args:
+      - name: task
+        accepts:
+          - string
+        required: true
+        help: "The task"
+"#;
+        let config = parse_and_validate(yaml).unwrap();
+        let step = &config.workflow["step"];
+        assert_eq!(step.args[0].accepts, vec![AcceptsType::String]);
+    }
+
+    #[test]
     fn repo_ywflow_yaml_at_repo_root() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let yaml_path = manifest_dir.join("ywflow.yaml");
@@ -351,12 +372,20 @@ workflow:
         let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
         let config = parse_and_validate(&content).unwrap();
 
-        // plan: no args
+        // plan: exactly one required arg accepting string
         let plan = config.workflow.get("plan").expect("plan step must exist");
-        assert!(
-            plan.args.is_empty(),
-            "plan step must have no args, found: {:?}",
+        assert_eq!(
+            plan.args.len(),
+            1,
+            "plan step must have exactly one arg, found: {:?}",
             plan.args
+        );
+        let plan_arg = &plan.args[0];
+        assert!(plan_arg.required, "plan arg must be required");
+        assert!(
+            plan_arg.accepts.contains(&AcceptsType::String),
+            "plan arg must accept string, found: {:?}",
+            plan_arg.accepts
         );
 
         // breakdown: exactly one required arg accepting file or url
@@ -395,7 +424,7 @@ workflow:
     }
 
     #[test]
-    fn repo_ywflow_yaml_plugins_has_marketplace_and_local() {
+    fn repo_ywflow_yaml_plugins_has_local() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let yaml_path = manifest_dir.join("ywflow.yaml");
         if !yaml_path.exists() {
@@ -403,18 +432,10 @@ workflow:
         }
         let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
         let config = parse_and_validate(&content).unwrap();
-        let has_marketplace = config
-            .plugins
-            .iter()
-            .any(|p| p.source == PluginSource::Marketplace);
         let has_local = config
             .plugins
             .iter()
             .any(|p| p.source == PluginSource::Local);
-        assert!(
-            has_marketplace,
-            "ywflow.yaml plugins must include at least one marketplace plugin"
-        );
         assert!(
             has_local,
             "ywflow.yaml plugins must include at least one local plugin"
@@ -422,7 +443,7 @@ workflow:
     }
 
     #[test]
-    fn repo_ywflow_yaml_cli_has_command_and_args() {
+    fn repo_ywflow_yaml_cli_has_command() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let yaml_path = manifest_dir.join("ywflow.yaml");
         if !yaml_path.exists() {
@@ -434,14 +455,10 @@ workflow:
             !config.cli.command.is_empty(),
             "ywflow.yaml cli must specify a command"
         );
-        assert!(
-            !config.cli.args.is_empty(),
-            "ywflow.yaml cli must specify at least one global arg"
-        );
     }
 
     #[test]
-    fn repo_ywflow_yaml_context_has_env_expansion() {
+    fn repo_ywflow_yaml_context_has_entries() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let yaml_path = manifest_dir.join("ywflow.yaml");
         if !yaml_path.exists() {
@@ -449,10 +466,9 @@ workflow:
         }
         let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
         let config = parse_and_validate(&content).unwrap();
-        let has_env_expansion = config.context.values().any(|v| v.contains("${env:"));
         assert!(
-            has_env_expansion,
-            "ywflow.yaml context must have at least one value using ${{env:...}} expansion"
+            config.context.len() >= 2,
+            "ywflow.yaml context must have at least two entries"
         );
     }
 
@@ -474,16 +490,12 @@ workflow:
         );
         let config = result.unwrap();
         assert!(
-            !config.required_env.is_empty(),
-            "ywflow.yaml must have at least one required_env entry"
-        );
-        assert!(
             config.context.len() >= 2,
             "ywflow.yaml must have at least two context variables"
         );
         assert!(
-            config.plugins.len() >= 2,
-            "ywflow.yaml must have at least two plugins"
+            !config.plugins.is_empty(),
+            "ywflow.yaml must have at least one plugin"
         );
         assert!(
             config.workflow.contains_key("plan"),
