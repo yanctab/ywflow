@@ -92,7 +92,7 @@ pub enum ConfigError {
     #[error("schema error: {0}")]
     Schema(String),
     #[error(
-        "undeclared token '${{{{token}}}}' in step '{step}' cli.args (declared: {declared})",
+        "undeclared token '${{{token}}}' in step '{step}' cli.args (declared: {declared})",
         declared = declared.join(", ")
     )]
     UndeclaredCliArgToken {
@@ -369,6 +369,150 @@ workflow:
             matches!(result, Err(ConfigError::Schema(_))),
             "expected ConfigError::Schema, got {:?}",
             result
+        );
+    }
+
+    // ── Slice 56: Static cli.args token validation ────────────────────────────
+
+    #[test]
+    fn cli_args_declared_step_arg_passes_validation() {
+        let yaml = r#"
+cli:
+  command: claude
+workflow:
+  execute:
+    description: "Execute with issue"
+    args:
+      - name: issue
+        required: true
+        help: "The issue URL"
+    cli:
+      args:
+        - "--issue"
+        - "${issue}"
+"#;
+        let result = parse_and_validate(yaml);
+        assert!(
+            result.is_ok(),
+            "declared step arg in cli.args should pass validation, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn cli_args_undeclared_token_causes_error() {
+        let yaml = r#"
+cli:
+  command: claude
+workflow:
+  execute:
+    description: "Execute step"
+    args:
+      - name: issue
+        required: true
+        help: "The issue URL"
+    cli:
+      args:
+        - "${typo}"
+"#;
+        let result = parse_and_validate(yaml);
+        assert!(
+            matches!(
+                result,
+                Err(ConfigError::UndeclaredCliArgToken {
+                    ref step,
+                    ref token,
+                    ..
+                }) if step == "execute" && token == "typo"
+            ),
+            "expected UndeclaredCliArgToken for undeclared token, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn cli_args_reserved_key_cwd_passes_validation() {
+        let yaml = r#"
+cli:
+  command: claude
+workflow:
+  execute:
+    description: "Step using cwd"
+    cli:
+      args:
+        - "${cwd}"
+"#;
+        let result = parse_and_validate(yaml);
+        assert!(
+            result.is_ok(),
+            "reserved key ${{cwd}} in step cli.args should pass validation, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn cli_args_env_token_passes_validation() {
+        let yaml = r#"
+cli:
+  command: claude
+workflow:
+  execute:
+    description: "Step using env var"
+    cli:
+      args:
+        - "${env:MY_VAR}"
+"#;
+        let result = parse_and_validate(yaml);
+        assert!(
+            result.is_ok(),
+            "env:-prefixed token in step cli.args should pass validation, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn global_cli_args_undeclared_token_does_not_error() {
+        let yaml = r#"
+cli:
+  command: claude
+  args:
+    - "${undeclared_token}"
+workflow:
+  execute:
+    description: "Step"
+"#;
+        let result = parse_and_validate(yaml);
+        assert!(
+            result.is_ok(),
+            "undeclared token in global cli.args should not trigger validation error, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn undeclared_cli_arg_token_error_message_contains_step_token_and_declared() {
+        let yaml = r#"
+cli:
+  command: claude
+workflow:
+  myStep:
+    description: "Step"
+    args:
+      - name: issue
+        required: true
+        help: "Issue"
+    cli:
+      args:
+        - "${typo}"
+"#;
+        let result = parse_and_validate(yaml);
+        let err = result.expect_err("should fail");
+        let msg = err.to_string();
+        assert!(msg.contains("myStep"), "error must name the step: {msg}");
+        assert!(msg.contains("typo"), "error must name the bad token: {msg}");
+        assert!(
+            msg.contains("issue"),
+            "error must list declared args: {msg}"
         );
     }
 
