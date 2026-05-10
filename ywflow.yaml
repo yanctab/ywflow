@@ -1,21 +1,14 @@
-required_env:
-  - ANTHROPIC_API_KEY
-
 context:
-  planning_model: claude-opus-4-5
-  api_key: ${env:ANTHROPIC_API_KEY}
+  planning_model: claude-opus-4-7
+  breakdown_model: claude-sonnet-4.6
+  execute_model: claude-haiku-4.5
   project_dir: ${cwd}
+  plugin: yanct-claude-plugin
 
 cli:
   command: claude
-  args:
-    - --model
-    - ${planning_model}
 
 plugins:
-  - name: yanct-claude-plugin
-    source: marketplace
-    package: yanct/yanct-claude-plugin
   - name: local-skills
     source: local
     path: .claude/skills
@@ -23,11 +16,21 @@ plugins:
 workflow:
   plan:
     description: "Plan the work: analyse the task and produce a PRD"
+    args:
+      - name: info
+        accepts:
+          - file
+          - string
+        required: true
+        help: "A string or a file to get started on the PRD"
+
     cli:
       args:
+        - --model
+        - ${planning_model}
         - --worktree
         - plan-session
-        - /prd-skill
+        - /${plugin}:new-prd
 
   breakdown:
     description: "Break down the PRD into implementation slices"
@@ -40,9 +43,11 @@ workflow:
         help: "Path or URL of the PRD to break down"
     cli:
       args:
+        - --model
+        - ${breakdown_model}
         - --worktree
         - breakdown-session
-        - /prd-to-issues-skill
+        - /${plugin}:prd-to-issues
 
   execute:
     description: "Execute a single implementation slice"
@@ -58,6 +63,8 @@ workflow:
         help: "Optional implementation notes"
     cli:
       args:
+        - --model
+        - ${execute_model}
         - --worktree
         - execute-session
-        - /execute-skill
+        - /${plugin}:execute
