@@ -14,8 +14,26 @@ pub enum WorkflowError {
     CommandNotFound { command: String },
     #[error("exec failed: {0}")]
     Exec(#[from] std::io::Error),
-    #[error("step '{step}': cli.args references '${{{token}}}' but '--{token}' was not provided")]
-    UnresolvedCliArgToken { step: String, token: String },
+}
+
+/// Classifies the origin of a token that expanded to an empty string.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EmptyTokenSource {
+    /// Token name matches a key in `config.context`.
+    Context,
+    /// Token was in `${env:VAR}` form and `VAR` was unset.
+    Env,
+    /// Token name matches a declared `StepArg.name` for the step.
+    StepArg,
+}
+
+/// Describes a single token that expanded to an empty string.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmptyToken {
+    /// The raw token name (e.g. `"notes"` or `"env:MY_VAR"`).
+    pub name: String,
+    /// Where this token was expected to come from.
+    pub source: EmptyTokenSource,
 }
 
 /// Verify that `command` is on the system PATH by checking it exists via `which`.
@@ -41,57 +59,79 @@ pub fn check_command_available(command: &str) -> Result<String, WorkflowError> {
 
 /// Assemble the final argv for a step, expanding all `${variable}` tokens.
 ///
-/// Order: `[global_args...] [step_args...]`
+/// Returns `(argv, empty_tokens)` where `argv` is the assembled argument list
+/// (absent tokens expand to `""`) and `empty_tokens` is the list of tokens that
+/// expanded to empty along with their `EmptyTokenSource` classification.
 ///
-/// Step-level args are scanned for remaining `${...}` tokens after expansion;
-/// any that remain unresolved return `Err(WorkflowError::UnresolvedCliArgToken)`.
-/// Global args are not scanned (they may contain context variables resolved later).
+/// Order: `[global_args...] [step_args...]`
 pub fn assemble_argv(
     global_cli: &CliConfig,
     step: &StepConfig,
     step_name: &str,
     resolved_vars: &HashMap<String, String>,
-) -> Result<Vec<String>, WorkflowError> {
-    // Expand global args without error checking (global args are out of scope).
-    let mut argv: Vec<String> = global_cli
-        .args
-        .iter()
-        .map(|arg| expand_tokens(arg, resolved_vars))
-        .collect();
+) -> (Vec<String>, Vec<EmptyToken>) {
+    let context_keys: Vec<String> = vec![];
+    let step_arg_names: Vec<String> = step.args.iter().map(|a| a.name.clone()).collect();
+    assemble_argv_classified(
+        global_cli,
+        step,
+        step_name,
+        resolved_vars,
+        &context_keys,
+        &step_arg_names,
+    )
+}
 
-    // Expand step-level args and scan for unresolved tokens.
+/// Assemble argv with full classification of empty tokens by source.
+///
+/// `context_keys` — names of keys from `config.context`.
+/// `step_arg_names` — names of declared `StepArg`s for this step.
+pub fn assemble_argv_classified(
+    global_cli: &CliConfig,
+    step: &StepConfig,
+    _step_name: &str,
+    resolved_vars: &HashMap<String, String>,
+    context_keys: &[String],
+    step_arg_names: &[String],
+) -> (Vec<String>, Vec<EmptyToken>) {
+    let mut argv: Vec<String> = Vec::new();
+    let mut empty_tokens: Vec<EmptyToken> = Vec::new();
+
+    // Expand global args — absent tokens become "".
+    for arg in &global_cli.args {
+        let (expanded, mut empties) =
+            expand_tokens_classified(arg, resolved_vars, context_keys, step_arg_names);
+        argv.push(expanded);
+        empty_tokens.append(&mut empties);
+    }
+
+    // Expand step-level args — absent tokens become "".
     if let Some(step_cli) = &step.cli {
         for entry in &step_cli.args {
-            let expanded = expand_tokens(entry, resolved_vars);
-            // Detect any remaining ${...} tokens in the expanded result.
-            if let Some(token) = find_unresolved_token(&expanded) {
-                return Err(WorkflowError::UnresolvedCliArgToken {
-                    step: step_name.to_string(),
-                    token,
-                });
-            }
+            let (expanded, mut empties) =
+                expand_tokens_classified(entry, resolved_vars, context_keys, step_arg_names);
             argv.push(expanded);
+            empty_tokens.append(&mut empties);
         }
     }
 
-    Ok(argv)
+    (argv, empty_tokens)
 }
 
-/// Return the name of the first unresolved `${name}` token found in `s`, or `None`.
-fn find_unresolved_token(s: &str) -> Option<String> {
-    if let Some(start) = s.find("${") {
-        let after_open = &s[start + 2..];
-        if let Some(end) = after_open.find('}') {
-            return Some(after_open[..end].to_string());
-        }
-    }
-    None
-}
-
-/// Substitute all `${key}` tokens in `s` using `vars`.
-fn expand_tokens(s: &str, vars: &HashMap<String, String>) -> String {
+/// Expand all `${key}` tokens in `s`, substituting `""` for absent keys.
+///
+/// Returns the expanded string plus a list of `EmptyToken`s for each token
+/// that was absent (i.e. expanded to `""`).
+fn expand_tokens_classified(
+    s: &str,
+    vars: &HashMap<String, String>,
+    context_keys: &[String],
+    step_arg_names: &[String],
+) -> (String, Vec<EmptyToken>) {
     let mut result = String::new();
+    let mut empties: Vec<EmptyToken> = Vec::new();
     let mut rest = s;
+
     while let Some(start) = rest.find("${") {
         result.push_str(&rest[..start]);
         let after_open = &rest[start + 2..];
@@ -100,18 +140,42 @@ fn expand_tokens(s: &str, vars: &HashMap<String, String>) -> String {
             if let Some(val) = vars.get(token) {
                 result.push_str(val);
             } else {
-                result.push_str("${");
-                result.push_str(token);
-                result.push('}');
+                // Token absent — substitute "" and record the empty expansion.
+                let source = classify_token(token, context_keys, step_arg_names);
+                empties.push(EmptyToken {
+                    name: token.to_string(),
+                    source,
+                });
+                // Empty substitution — nothing added to result.
             }
             rest = &after_open[end + 1..];
         } else {
+            // Malformed `${` with no closing `}` — treat literally.
             result.push_str("${");
             rest = after_open;
         }
     }
     result.push_str(rest);
-    result
+    (result, empties)
+}
+
+/// Classify an absent token by its origin.
+fn classify_token(
+    token: &str,
+    context_keys: &[String],
+    step_arg_names: &[String],
+) -> EmptyTokenSource {
+    if token.starts_with("env:") {
+        EmptyTokenSource::Env
+    } else if context_keys.iter().any(|k| k == token) {
+        EmptyTokenSource::Context
+    } else if step_arg_names.iter().any(|n| n == token) {
+        EmptyTokenSource::StepArg
+    } else {
+        // Fallback: treat as StepArg if not identifiable (should not happen in
+        // validated configs — static validation ensures every token is declared).
+        EmptyTokenSource::StepArg
+    }
 }
 
 /// Launch the step as a fully interactive child process.
@@ -128,7 +192,7 @@ pub fn run_step(
     let command = &global_cli.command;
     check_command_available(command)?;
 
-    let args = assemble_argv(global_cli, step, step_name, resolved_vars)?;
+    let (args, _empty_tokens) = assemble_argv(global_cli, step, step_name, resolved_vars);
 
     let status = std::process::Command::new(command)
         .args(args)
@@ -176,7 +240,7 @@ mod tests {
         let step = make_step(vec!["--worktree", "plan-session", "/plan-skill"]);
         let vars = HashMap::new();
 
-        let argv = assemble_argv(&global, &step, "plan", &vars).unwrap();
+        let (argv, _empty_tokens) = assemble_argv(&global, &step, "plan", &vars);
         assert_eq!(
             argv,
             vec![
@@ -198,7 +262,7 @@ mod tests {
         vars.insert("model".to_string(), "claude-opus-4-5".to_string());
         vars.insert("task".to_string(), "do_stuff".to_string());
 
-        let argv = assemble_argv(&global, &step, "plan", &vars).unwrap();
+        let (argv, _empty_tokens) = assemble_argv(&global, &step, "plan", &vars);
         assert_eq!(argv, vec!["--model", "claude-opus-4-5", "do_stuff"]);
     }
 
@@ -309,46 +373,274 @@ mod tests {
         };
         let vars = HashMap::new();
 
-        let argv = assemble_argv(&global, &step, "plan", &vars).unwrap();
+        let (argv, _empty_tokens) = assemble_argv(&global, &step, "plan", &vars);
         assert_eq!(argv, vec!["--model", "claude-opus-4-5"]);
     }
 
-    // ── Slice 58: Runtime error for unresolved step-level cli.args tokens ────────
+    // ── Criterion 1: absent token expands to "" (never leaves literal ${name}) ──
 
-    /// Unresolved step-level ${token} → UnresolvedCliArgToken error.
+    /// An absent token in resolved_vars expands to "" — the literal ${name} never
+    /// appears in the output argv.
     #[test]
-    fn unresolved_step_arg_token_returns_error() {
+    fn absent_token_expands_to_empty_string() {
         let global = make_global_cli(vec![]);
         let step = make_step(vec!["${notes}"]);
         let vars: HashMap<String, String> = HashMap::new(); // notes absent
 
-        let result = assemble_argv(&global, &step, "execute", &vars);
-        assert!(
-            matches!(
-                result,
-                Err(WorkflowError::UnresolvedCliArgToken {
-                    ref step,
-                    ref token
-                }) if step == "execute" && token == "notes"
-            ),
-            "expected UnresolvedCliArgToken for absent optional arg, got {:?}",
-            result
+        let (argv, _empty_tokens) = assemble_argv(&global, &step, "execute", &vars);
+        assert_eq!(
+            argv,
+            vec![""],
+            "absent token must expand to empty string, got {:?}",
+            argv
         );
     }
 
-    /// Error message for unresolved step-level token matches the exact format.
+    // ── Criterion 2: present token expands to its value unchanged ─────────────
+
+    /// A present token expands to its value unchanged.
     #[test]
-    fn unresolved_cli_arg_token_error_message() {
-        let err = WorkflowError::UnresolvedCliArgToken {
-            step: "execute".to_string(),
-            token: "notes".to_string(),
-        };
-        let expected =
-            "step 'execute': cli.args references '${notes}' but '--notes' was not provided";
-        assert_eq!(err.to_string(), expected);
+    fn present_token_expands_to_value() {
+        let global = make_global_cli(vec![]);
+        let step = make_step(vec!["${task}"]);
+        let mut vars = HashMap::new();
+        vars.insert("task".to_string(), "do_stuff".to_string());
+
+        let (argv, empty_tokens) = assemble_argv(&global, &step, "plan", &vars);
+        assert_eq!(argv, vec!["do_stuff"]);
+        assert!(
+            empty_tokens.is_empty(),
+            "no empty tokens expected for present token, got {:?}",
+            empty_tokens
+        );
     }
 
-    /// Mixed context var and step arg in same entry expands both when both are in vars.
+    // ── Criterion 3: ${cwd} resolves to cwd and is never recorded as empty ───
+
+    /// ${cwd} resolves to the current working directory and is not in empty tokens.
+    #[test]
+    fn cwd_token_resolves_to_cwd_not_empty() {
+        let global = make_global_cli(vec![]);
+        let step = make_step(vec!["${cwd}"]);
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let mut vars = HashMap::new();
+        vars.insert("cwd".to_string(), cwd.clone());
+
+        let (argv, empty_tokens) = assemble_argv(&global, &step, "plan", &vars);
+        assert_eq!(argv, vec![cwd.clone()]);
+        assert!(
+            empty_tokens.is_empty(),
+            "${cwd} must not be recorded as empty, got {:?}",
+            empty_tokens
+        );
+    }
+
+    // ── Criterion 4: assemble_argv returns (Vec<String>, Vec<EmptyToken>) ─────
+
+    /// assemble_argv returns a 2-tuple (argv, empty_tokens).
+    #[test]
+    fn assemble_argv_returns_tuple() {
+        let global = make_global_cli(vec!["--model", "claude-opus-4-5"]);
+        let step = make_step(vec!["--worktree", "plan-session"]);
+        let vars = HashMap::new();
+
+        let (argv, empty_tokens): (Vec<String>, Vec<EmptyToken>) =
+            assemble_argv(&global, &step, "plan", &vars);
+        assert!(!argv.is_empty());
+        // empty_tokens is Vec<EmptyToken> — the type annotation alone tests the shape
+        let _ = empty_tokens;
+    }
+
+    // ── Criterion 5: context-key absent token classified as Context ───────────
+
+    /// A token whose name matches a key in config.context is classified
+    /// EmptyTokenSource::Context when it expands to empty.
+    #[test]
+    fn absent_context_token_classified_as_context() {
+        let global = make_global_cli(vec![]);
+        // step has a StepArg named "project" AND a context_keys list that includes "project"
+        let step = StepConfig {
+            description: "test".to_string(),
+            args: vec![],
+            cli: Some(StepCliConfig {
+                args: vec!["${project}".to_string()],
+            }),
+        };
+        let vars: HashMap<String, String> = HashMap::new();
+        let context_keys = vec!["project".to_string()];
+        let step_arg_names: Vec<String> = vec![];
+
+        let (argv, empty_tokens) = assemble_argv_classified(
+            &global,
+            &step,
+            "plan",
+            &vars,
+            &context_keys,
+            &step_arg_names,
+        );
+        assert_eq!(argv, vec![""]);
+        assert_eq!(empty_tokens.len(), 1);
+        assert_eq!(empty_tokens[0].name, "project");
+        assert!(
+            matches!(empty_tokens[0].source, EmptyTokenSource::Context),
+            "expected Context, got {:?}",
+            empty_tokens[0].source
+        );
+    }
+
+    // ── Criterion 6: absent env:VAR classified as Env ─────────────────────────
+
+    /// A token in ${env:VAR} form where VAR is unset is classified
+    /// EmptyTokenSource::Env when it expands to empty.
+    #[test]
+    fn absent_env_token_classified_as_env() {
+        let global = make_global_cli(vec![]);
+        let step = StepConfig {
+            description: "test".to_string(),
+            args: vec![],
+            cli: Some(StepCliConfig {
+                args: vec!["${env:YWFLOW_NONEXISTENT_VAR_XYZ}".to_string()],
+            }),
+        };
+        let vars: HashMap<String, String> = HashMap::new(); // env var absent
+        let context_keys: Vec<String> = vec![];
+        let step_arg_names: Vec<String> = vec![];
+
+        let (argv, empty_tokens) = assemble_argv_classified(
+            &global,
+            &step,
+            "plan",
+            &vars,
+            &context_keys,
+            &step_arg_names,
+        );
+        assert_eq!(argv, vec![""]);
+        assert_eq!(empty_tokens.len(), 1);
+        assert_eq!(empty_tokens[0].name, "env:YWFLOW_NONEXISTENT_VAR_XYZ");
+        assert!(
+            matches!(empty_tokens[0].source, EmptyTokenSource::Env),
+            "expected Env, got {:?}",
+            empty_tokens[0].source
+        );
+    }
+
+    // ── Criterion 7: absent step-arg token classified as StepArg ─────────────
+
+    /// A token matching a declared StepArg.name for that step is classified
+    /// EmptyTokenSource::StepArg when it expands to empty.
+    #[test]
+    fn absent_step_arg_token_classified_as_step_arg() {
+        use crate::config::StepArg;
+        let global = make_global_cli(vec![]);
+        let step = StepConfig {
+            description: "test".to_string(),
+            args: vec![StepArg {
+                name: "notes".to_string(),
+                accepts: vec![],
+                required: false,
+                help: "optional notes".to_string(),
+            }],
+            cli: Some(StepCliConfig {
+                args: vec!["${notes}".to_string()],
+            }),
+        };
+        let vars: HashMap<String, String> = HashMap::new();
+        let context_keys: Vec<String> = vec![];
+        let step_arg_names: Vec<String> = vec!["notes".to_string()];
+
+        let (argv, empty_tokens) = assemble_argv_classified(
+            &global,
+            &step,
+            "execute",
+            &vars,
+            &context_keys,
+            &step_arg_names,
+        );
+        assert_eq!(argv, vec![""]);
+        assert_eq!(empty_tokens.len(), 1);
+        assert_eq!(empty_tokens[0].name, "notes");
+        assert!(
+            matches!(empty_tokens[0].source, EmptyTokenSource::StepArg),
+            "expected StepArg, got {:?}",
+            empty_tokens[0].source
+        );
+    }
+
+    // ── Criterion 8: non-empty tokens not in Vec<EmptyToken> ─────────────────
+
+    /// A context variable or env var that resolves to a non-empty value is not
+    /// included in the returned Vec<EmptyToken>.
+    #[test]
+    fn present_token_not_in_empty_tokens() {
+        let global = make_global_cli(vec![]);
+        let step = make_step(vec!["${model}"]);
+        let mut vars = HashMap::new();
+        vars.insert("model".to_string(), "claude-opus-4-5".to_string());
+        let context_keys = vec!["model".to_string()];
+        let step_arg_names: Vec<String> = vec![];
+
+        let (argv, empty_tokens) = assemble_argv_classified(
+            &global,
+            &step,
+            "plan",
+            &vars,
+            &context_keys,
+            &step_arg_names,
+        );
+        assert_eq!(argv, vec!["claude-opus-4-5"]);
+        assert!(
+            empty_tokens.is_empty(),
+            "present token must not appear in empty_tokens, got {:?}",
+            empty_tokens
+        );
+    }
+
+    // ── Criterion 9+10: UnresolvedCliArgToken removed; old tests rewritten ────
+
+    /// Former test: unresolved step-level ${token} now expands to "" instead of error.
+    /// Renamed from: unresolved_step_arg_token_returns_error
+    #[test]
+    fn absent_step_arg_expands_to_empty() {
+        let global = make_global_cli(vec![]);
+        let step = make_step(vec!["${notes}"]);
+        let vars: HashMap<String, String> = HashMap::new(); // notes absent
+
+        let (argv, _empty_tokens) = assemble_argv(&global, &step, "execute", &vars);
+        assert_eq!(
+            argv,
+            vec![""],
+            "absent step arg must expand to empty string"
+        );
+    }
+
+    /// Former test: error message test replaced — no error variant, so we verify
+    /// the empty token name is preserved.
+    /// Renamed from: unresolved_cli_arg_token_error_message
+    #[test]
+    fn absent_step_arg_empty_token_carries_name() {
+        let global = make_global_cli(vec![]);
+        let step = make_step(vec!["${notes}"]);
+        let vars: HashMap<String, String> = HashMap::new();
+        let context_keys: Vec<String> = vec![];
+        let step_arg_names = vec!["notes".to_string()];
+
+        let (_argv, empty_tokens) = assemble_argv_classified(
+            &global,
+            &step,
+            "execute",
+            &vars,
+            &context_keys,
+            &step_arg_names,
+        );
+        assert_eq!(empty_tokens.len(), 1);
+        assert_eq!(empty_tokens[0].name, "notes");
+    }
+
+    /// Former test: mixed context var and step arg still expands both when present.
+    /// Renamed from: mixed_context_and_step_arg_expands_both
     #[test]
     fn mixed_context_and_step_arg_expands_both() {
         let global = make_global_cli(vec![]);
@@ -357,27 +649,24 @@ mod tests {
         vars.insert("base".to_string(), "https://github.com".to_string());
         vars.insert("issue".to_string(), "42".to_string());
 
-        let argv = assemble_argv(&global, &step, "execute", &vars).unwrap();
+        let (argv, _empty_tokens) = assemble_argv(&global, &step, "execute", &vars);
         assert_eq!(argv, vec!["--flag", "https://github.com/42"]);
     }
 
-    /// Global cli.args with unresolved tokens do NOT trigger UnresolvedCliArgToken.
+    /// Former test: global cli.args with unresolved tokens do not cause failure.
+    /// Renamed from: global_unresolved_token_does_not_trigger_error
     #[test]
-    fn global_unresolved_token_does_not_trigger_error() {
+    fn global_unresolved_token_expands_to_empty() {
         let global = make_global_cli(vec!["${global_token}"]);
         let step = StepConfig {
             description: "step with no step-level cli".to_string(),
             args: vec![],
-            cli: None, // no step-level cli.args
+            cli: None,
         };
         let vars: HashMap<String, String> = HashMap::new();
 
-        // Should succeed (no error) — global args are not scanned for unresolved tokens.
-        let result = assemble_argv(&global, &step, "plan", &vars);
-        assert!(
-            result.is_ok(),
-            "global unresolved token must not trigger UnresolvedCliArgToken, got {:?}",
-            result
-        );
+        let (argv, _empty_tokens) = assemble_argv(&global, &step, "plan", &vars);
+        // Global args expand to empty — no error, no literal ${...} in output.
+        assert_eq!(argv, vec![""]);
     }
 }
