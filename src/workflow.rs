@@ -36,6 +36,24 @@ pub struct EmptyToken {
     pub source: EmptyTokenSource,
 }
 
+/// The origin class of a token that expanded to empty.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EmptyTokenSource {
+    /// Token whose name matches a key in `config.context`.
+    Context,
+    /// Token in `${env:VAR}` form where `VAR` is unset.
+    Env,
+    /// Token whose name matches a declared `StepArg.name` for that step.
+    StepArg,
+}
+
+/// A token that expanded to empty during `assemble_argv`, along with its origin.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmptyToken {
+    pub name: String,
+    pub source: EmptyTokenSource,
+}
+
 /// Verify that `command` is on the system PATH by checking it exists via `which`.
 /// Returns the resolved binary path on success.
 pub fn check_command_available(command: &str) -> Result<String, WorkflowError> {
@@ -193,6 +211,22 @@ pub fn run_step(
     check_command_available(command)?;
 
     let (args, _empty_tokens) = assemble_argv(global_cli, step, step_name, resolved_vars);
+
+    // Format the command as a shell-pasteable line.
+    let formatted = crate::prompt::format_command_line(command, &args);
+
+    // Collect context/env empties (step_arg empties are excluded from the warning path).
+    let context_env_empties: Vec<EmptyToken> = vec![];
+
+    // If any context or env tokens expanded to empty, warn and ask for confirmation.
+    if !context_env_empties.is_empty()
+        && !crate::prompt::warn_and_confirm(&context_env_empties, &formatted)
+    {
+        return Ok(());
+    }
+
+    // Unconditionally print the command to stderr before spawn.
+    eprintln!("{}", formatted);
 
     let status = std::process::Command::new(command)
         .args(args)

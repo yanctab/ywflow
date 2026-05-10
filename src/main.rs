@@ -5,10 +5,11 @@
 
 mod cli;
 pub mod config;
-mod context;
+pub mod context;
 mod input;
 mod plugins;
-mod workflow;
+mod prompt;
+pub mod workflow;
 
 use anyhow::Result;
 use config::ConfigError;
