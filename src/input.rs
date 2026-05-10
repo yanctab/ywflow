@@ -43,7 +43,9 @@ pub fn validate(
                 }
             }
             AcceptsType::String => {
-                return Ok(());
+                if !value.is_empty() {
+                    return Ok(());
+                }
             }
         }
     }
@@ -62,6 +64,15 @@ pub fn validate(
             accepts: accepts_str,
             value: value.to_string(),
             actual: "URL".to_string(),
+        });
+    }
+    let accepts_string = accepts.iter().any(|a| matches!(a, AcceptsType::String));
+    if value.is_empty() && accepts_string {
+        return Err(InputError::TypeMismatch {
+            name: arg_name.to_string(),
+            accepts: accepts_str,
+            value: value.to_string(),
+            actual: "empty string".to_string(),
         });
     }
     Err(InputError::FileNotFound {
@@ -194,6 +205,139 @@ mod tests {
         assert!(
             result.is_ok(),
             "expected Ok for URL with [File, Url], got {:?}",
+            result
+        );
+    }
+
+    // Criterion 1: non-empty string + accepts [String] → Ok
+    #[test]
+    fn string_non_empty_accepted() {
+        let result = validate("myarg", "hello world", &[AcceptsType::String], &no_http);
+        assert!(
+            result.is_ok(),
+            "expected Ok for non-empty string, got {:?}",
+            result
+        );
+    }
+
+    // Criterion 2: empty string + accepts [String] → TypeMismatch
+    #[test]
+    fn string_empty_rejected() {
+        let result = validate("myarg", "", &[AcceptsType::String], &no_http);
+        assert!(
+            matches!(result, Err(InputError::TypeMismatch { ref name, .. }) if name == "myarg"),
+            "expected TypeMismatch for empty string, got {:?}",
+            result
+        );
+    }
+
+    // Criterion 3: accepts_str renders String as "string" — check via TypeMismatch error message
+    #[test]
+    fn accepts_str_renders_string_token() {
+        let result = validate("myarg", "", &[AcceptsType::String], &no_http);
+        if let Err(InputError::TypeMismatch { ref accepts, .. }) = result {
+            assert_eq!(accepts, "string");
+        } else {
+            panic!("expected TypeMismatch, got {:?}", result);
+        }
+    }
+
+    // String mixed with File: value is non-empty plain string (not a real file) → Ok (String arm matches)
+    #[test]
+    fn string_mixed_with_file_nonempty_string() {
+        let result = validate(
+            "myarg",
+            "some-plain-text",
+            &[AcceptsType::String, AcceptsType::File],
+            &no_http,
+        );
+        assert!(
+            result.is_ok(),
+            "expected Ok for non-empty string with [String, File], got {:?}",
+            result
+        );
+    }
+
+    // String mixed with File: empty string → TypeMismatch
+    #[test]
+    fn string_mixed_with_file_empty_rejected() {
+        let result = validate(
+            "myarg",
+            "",
+            &[AcceptsType::String, AcceptsType::File],
+            &no_http,
+        );
+        assert!(
+            matches!(result, Err(InputError::TypeMismatch { .. })),
+            "expected TypeMismatch for empty string with [String, File], got {:?}",
+            result
+        );
+    }
+
+    // String mixed with Url: non-empty string → Ok
+    #[test]
+    fn string_mixed_with_url_nonempty_string() {
+        let result = validate(
+            "myarg",
+            "plain text",
+            &[AcceptsType::String, AcceptsType::Url],
+            &no_http,
+        );
+        assert!(
+            result.is_ok(),
+            "expected Ok for non-empty string with [String, Url], got {:?}",
+            result
+        );
+    }
+
+    // String mixed with Url: empty string → TypeMismatch
+    #[test]
+    fn string_mixed_with_url_empty_rejected() {
+        let result = validate(
+            "myarg",
+            "",
+            &[AcceptsType::String, AcceptsType::Url],
+            &no_http,
+        );
+        assert!(
+            matches!(result, Err(InputError::TypeMismatch { .. })),
+            "expected TypeMismatch for empty string with [String, Url], got {:?}",
+            result
+        );
+    }
+
+    // accepts [string, file] with valid file path → Ok (File arm matches)
+    #[test]
+    fn string_file_accepts_valid_file_path() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, "content").unwrap();
+        let path = f.path().to_str().unwrap();
+
+        let result = validate(
+            "myarg",
+            path,
+            &[AcceptsType::String, AcceptsType::File],
+            &no_http,
+        );
+        assert!(
+            result.is_ok(),
+            "expected Ok for valid file path with [String, File], got {:?}",
+            result
+        );
+    }
+
+    // accepts [file, string] with valid file path → Ok (String arm matches on non-empty path)
+    #[test]
+    fn file_string_accepts_nonempty_value() {
+        let result = validate(
+            "myarg",
+            "any-value",
+            &[AcceptsType::File, AcceptsType::String],
+            &no_http,
+        );
+        assert!(
+            result.is_ok(),
+            "expected Ok for non-empty value with [File, String], got {:?}",
             result
         );
     }
