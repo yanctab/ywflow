@@ -17,12 +17,11 @@ workflow:
   plan:
     description: "Plan the work: analyse the task and produce a PRD"
     args:
-      - name: info
+      - name: task
         accepts:
-          - file
           - string
         required: true
-        help: "A string or a file to get started on the PRD"
+        help: "A description of the task to plan"
     cli:
       args:
         - --model
