@@ -15,10 +15,11 @@ pub fn build_command(config: Option<&Config>) -> Command {
     if let Some(cfg) = config {
         for (name, step) in &cfg.workflow {
             let mut sub = Command::new(name.clone()).about(step.description.clone());
-            for arg in &step.args {
+            for (i, arg) in step.args.iter().enumerate() {
                 let clap_arg = Arg::new(arg.name.clone())
                     .help(arg.help.clone())
-                    .required(arg.required);
+                    .required(arg.required)
+                    .index(i + 1);
                 sub = sub.arg(clap_arg);
             }
             cmd = cmd.subcommand(sub);
@@ -125,6 +126,89 @@ mod tests {
         assert!(
             task_arg.is_required_set(),
             "expected 'task' argument to be required"
+        );
+    }
+
+    #[test]
+    fn single_arg_step_has_index_one() {
+        use crate::config::StepArg;
+
+        let mut workflow = IndexMap::new();
+        workflow.insert(
+            "plan".to_string(),
+            StepConfig {
+                description: "Plan the work".to_string(),
+                args: vec![StepArg {
+                    name: "task".to_string(),
+                    accepts: vec![],
+                    required: true,
+                    help: "The task to plan".to_string(),
+                }],
+                cli: None,
+            },
+        );
+        let config = minimal_config(workflow);
+        let cmd = build_command(Some(&config));
+
+        let plan_sub = cmd.find_subcommand("plan").unwrap();
+        let task_arg = plan_sub
+            .get_arguments()
+            .find(|a| a.get_id() == "task")
+            .expect("expected 'task' argument on plan subcommand");
+        assert_eq!(
+            task_arg.get_index(),
+            Some(1),
+            "expected 'task' argument to have index 1"
+        );
+    }
+
+    #[test]
+    fn two_arg_step_has_indices_one_and_two() {
+        use crate::config::StepArg;
+
+        let mut workflow = IndexMap::new();
+        workflow.insert(
+            "execute".to_string(),
+            StepConfig {
+                description: "Execute the plan".to_string(),
+                args: vec![
+                    StepArg {
+                        name: "issue".to_string(),
+                        accepts: vec![],
+                        required: true,
+                        help: "The issue to execute".to_string(),
+                    },
+                    StepArg {
+                        name: "notes".to_string(),
+                        accepts: vec![],
+                        required: false,
+                        help: "Optional notes".to_string(),
+                    },
+                ],
+                cli: None,
+            },
+        );
+        let config = minimal_config(workflow);
+        let cmd = build_command(Some(&config));
+
+        let execute_sub = cmd.find_subcommand("execute").unwrap();
+        let issue_arg = execute_sub
+            .get_arguments()
+            .find(|a| a.get_id() == "issue")
+            .expect("expected 'issue' argument on execute subcommand");
+        let notes_arg = execute_sub
+            .get_arguments()
+            .find(|a| a.get_id() == "notes")
+            .expect("expected 'notes' argument on execute subcommand");
+        assert_eq!(
+            issue_arg.get_index(),
+            Some(1),
+            "expected 'issue' argument to have index 1"
+        );
+        assert_eq!(
+            notes_arg.get_index(),
+            Some(2),
+            "expected 'notes' argument to have index 2"
         );
     }
 }
