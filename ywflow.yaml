@@ -28,7 +28,7 @@ workflow:
         - ${planning_model}
         - --worktree
         - plan-session
-        - /${plugin}:new-prd
+        - "/${plugin}:new-prd ${task}"
 
   breakdown:
     description: "Break down the PRD into implementation slices"
@@ -45,7 +45,7 @@ workflow:
         - ${breakdown_model}
         - --worktree
         - breakdown-session
-        - /${plugin}:prd-to-issues
+        - "/${plugin}:prd-to-issues ${prd}"
 
   execute:
     description: "Execute a single implementation slice"
@@ -65,4 +65,4 @@ workflow:
         - ${execute_model}
         - --worktree
         - execute-session
-        - /${plugin}:execute
+        - "/${plugin}:execute ${issue} ${notes}"
