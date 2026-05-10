@@ -1,0 +1,68 @@
+context:
+  planning_model: claude-opus-4-7
+  breakdown_model: claude-sonnet-4.6
+  execute_model: claude-haiku-4.5
+  project_dir: ${cwd}
+  plugin: yanct-claude-plugin
+
+cli:
+  command: claude
+
+plugins:
+  - name: local-skills
+    source: local
+    path: .claude/skills
+
+workflow:
+  plan:
+    description: "Plan the work: analyse the task and produce a PRD"
+    args:
+      - name: task
+        accepts:
+          - string
+        required: true
+        help: "A description of the task to plan"
+    cli:
+      args:
+        - --model
+        - ${planning_model}
+        - --worktree
+        - plan-session
+        - /${plugin}:new-prd
+
+  breakdown:
+    description: "Break down the PRD into implementation slices"
+    args:
+      - name: prd
+        accepts:
+          - file
+          - url
+        required: true
+        help: "Path or URL of the PRD to break down"
+    cli:
+      args:
+        - --model
+        - ${breakdown_model}
+        - --worktree
+        - breakdown-session
+        - /${plugin}:prd-to-issues
+
+  execute:
+    description: "Execute a single implementation slice"
+    args:
+      - name: issue
+        accepts:
+          - url
+        required: true
+        help: "GitHub issue URL for the slice to implement"
+      - name: notes
+        accepts: []
+        required: false
+        help: "Optional implementation notes"
+    cli:
+      args:
+        - --model
+        - ${execute_model}
+        - --worktree
+        - execute-session
+        - /${plugin}:execute
