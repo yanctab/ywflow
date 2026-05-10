@@ -36,24 +36,6 @@ pub struct EmptyToken {
     pub source: EmptyTokenSource,
 }
 
-/// The origin class of a token that expanded to empty.
-#[derive(Debug, Clone, PartialEq)]
-pub enum EmptyTokenSource {
-    /// Token whose name matches a key in `config.context`.
-    Context,
-    /// Token in `${env:VAR}` form where `VAR` is unset.
-    Env,
-    /// Token whose name matches a declared `StepArg.name` for that step.
-    StepArg,
-}
-
-/// A token that expanded to empty during `assemble_argv`, along with its origin.
-#[derive(Debug, Clone, PartialEq)]
-pub struct EmptyToken {
-    pub name: String,
-    pub source: EmptyTokenSource,
-}
-
 /// Verify that `command` is on the system PATH by checking it exists via `which`.
 /// Returns the resolved binary path on success.
 pub fn check_command_available(command: &str) -> Result<String, WorkflowError> {
