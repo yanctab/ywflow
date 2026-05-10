@@ -169,7 +169,8 @@ fn run() -> Result<()> {
                 context::resolve(cfg, name, &raw_args).map_err(|e| anyhow::anyhow!("{e}"))?;
 
             // Launch the step.
-            workflow::run_step(&cfg.cli, step, &resolved).map_err(|e| anyhow::anyhow!("{e}"))?;
+            workflow::run_step(&cfg.cli, step, name, &resolved)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         None => {
             cli::build_command(config.as_ref()).print_help()?;
