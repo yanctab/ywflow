@@ -23,7 +23,6 @@ workflow:
           - string
         required: true
         help: "A string or a file to get started on the PRD"
-
     cli:
       args:
         - --model

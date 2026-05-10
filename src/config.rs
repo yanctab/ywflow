@@ -372,12 +372,20 @@ workflow:
         let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
         let config = parse_and_validate(&content).unwrap();
 
-        // plan: no args
+        // plan: exactly one required arg accepting string
         let plan = config.workflow.get("plan").expect("plan step must exist");
-        assert!(
-            plan.args.is_empty(),
-            "plan step must have no args, found: {:?}",
+        assert_eq!(
+            plan.args.len(),
+            1,
+            "plan step must have exactly one arg, found: {:?}",
             plan.args
+        );
+        let plan_arg = &plan.args[0];
+        assert!(plan_arg.required, "plan arg must be required");
+        assert!(
+            plan_arg.accepts.contains(&AcceptsType::String),
+            "plan arg must accept string, found: {:?}",
+            plan_arg.accepts
         );
 
         // breakdown: exactly one required arg accepting file or url
