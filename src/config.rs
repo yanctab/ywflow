@@ -36,6 +36,7 @@ pub struct CliConfig {
 pub enum AcceptsType {
     File,
     Url,
+    String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -323,6 +324,26 @@ workflow:
             "expected ConfigError::Schema, got {:?}",
             result
         );
+    }
+
+    #[test]
+    fn accepts_type_string_deserialises_from_yaml_token() {
+        let yaml = r#"
+cli:
+  command: claude
+workflow:
+  step:
+    description: "A step"
+    args:
+      - name: task
+        accepts:
+          - string
+        required: true
+        help: "The task"
+"#;
+        let config = parse_and_validate(yaml).unwrap();
+        let step = &config.workflow["step"];
+        assert_eq!(step.args[0].accepts, vec![AcceptsType::String]);
     }
 
     #[test]

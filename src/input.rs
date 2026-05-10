@@ -42,6 +42,9 @@ pub fn validate(
                     return Ok(());
                 }
             }
+            AcceptsType::String => {
+                return Ok(());
+            }
         }
     }
     let accepts_str = accepts
@@ -49,6 +52,7 @@ pub fn validate(
         .map(|a| match a {
             AcceptsType::File => "file",
             AcceptsType::Url => "url",
+            AcceptsType::String => "string",
         })
         .collect::<Vec<_>>()
         .join(", ");
