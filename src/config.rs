@@ -680,4 +680,229 @@ workflow:
         let step = &config.workflow["step"];
         assert_eq!(step.args[0].accepts, vec![AcceptsType::String]);
     }
+
+    // ── Issue 63: Fix cli.args in ywflow.yaml and fixture ─────────────────────
+
+    fn load_production_config() -> Config {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let yaml_path = manifest_dir.join("ywflow.yaml");
+        let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
+        parse_and_validate(&content).expect("ywflow.yaml must parse")
+    }
+
+    fn load_fixture_config() -> Config {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let yaml_path = manifest_dir.join("tests/assets/ywflow.yaml");
+        let content = fs::read_to_string(&yaml_path).expect("read tests/assets/ywflow.yaml");
+        parse_and_validate(&content).expect("tests/assets/ywflow.yaml must parse")
+    }
+
+    // Criterion 1: production ywflow.yaml plan step has exactly one cli.args entry
+    // that is the combined prompt "/${plugin}:new-prd ${task}".
+    #[test]
+    fn production_plan_step_cli_args_has_single_combined_entry() {
+        let config = load_production_config();
+        let plan = &config.workflow["plan"];
+        let step_args = plan.cli.as_ref().expect("plan must have cli").args.clone();
+        // The last entry should be the combined prompt (prefix + arg in one string)
+        let last = step_args.last().expect("plan cli.args must not be empty");
+        assert!(
+            last.contains(":new-prd") && last.contains("${task}"),
+            "plan's last cli.args entry must combine the plugin prefix and ${{task}} token, got: {last:?}"
+        );
+        // There must be exactly one entry that matches the combined pattern (not two separate)
+        let combined_entries: Vec<_> = step_args
+            .iter()
+            .filter(|e| e.contains(":new-prd"))
+            .collect();
+        assert_eq!(
+            combined_entries.len(),
+            1,
+            "plan must have exactly one cli.args entry containing ':new-prd', got: {step_args:?}"
+        );
+        let task_only_entries: Vec<_> = step_args
+            .iter()
+            .filter(|e| e.as_str() == "${task}")
+            .collect();
+        assert!(
+            task_only_entries.is_empty(),
+            "plan must not have a bare '${{task}}' entry separate from the prompt, got: {step_args:?}"
+        );
+    }
+
+    // Criterion 2: production ywflow.yaml breakdown step has exactly one cli.args entry
+    // that is the combined prompt "/${plugin}:prd-to-issues ${prd}".
+    #[test]
+    fn production_breakdown_step_cli_args_has_single_combined_entry() {
+        let config = load_production_config();
+        let breakdown = &config.workflow["breakdown"];
+        let step_args = breakdown
+            .cli
+            .as_ref()
+            .expect("breakdown must have cli")
+            .args
+            .clone();
+        let last = step_args
+            .last()
+            .expect("breakdown cli.args must not be empty");
+        assert!(
+            last.contains(":prd-to-issues") && last.contains("${prd}"),
+            "breakdown's last cli.args entry must combine the plugin prefix and ${{prd}} token, got: {last:?}"
+        );
+        let prd_only_entries: Vec<_> = step_args
+            .iter()
+            .filter(|e| e.as_str() == "${prd}")
+            .collect();
+        assert!(
+            prd_only_entries.is_empty(),
+            "breakdown must not have a bare '${{prd}}' entry separate from the prompt, got: {step_args:?}"
+        );
+    }
+
+    // Criterion 3: production ywflow.yaml execute step has exactly one cli.args entry
+    // that is the combined prompt "/${plugin}:execute ${issue} ${notes}".
+    #[test]
+    fn production_execute_step_cli_args_has_single_combined_entry() {
+        let config = load_production_config();
+        let execute = &config.workflow["execute"];
+        let step_args = execute
+            .cli
+            .as_ref()
+            .expect("execute must have cli")
+            .args
+            .clone();
+        let last = step_args
+            .last()
+            .expect("execute cli.args must not be empty");
+        assert!(
+            last.contains(":execute") && last.contains("${issue}") && last.contains("${notes}"),
+            "execute's last cli.args entry must combine the plugin prefix, ${{issue}}, and ${{notes}}, got: {last:?}"
+        );
+        let issue_only_entries: Vec<_> = step_args
+            .iter()
+            .filter(|e| e.as_str() == "${issue}")
+            .collect();
+        assert!(
+            issue_only_entries.is_empty(),
+            "execute must not have a bare '${{issue}}' entry separate from the prompt, got: {step_args:?}"
+        );
+    }
+
+    // Criterion 4: fixture mirrors the same three-step cli.args shape as production.
+    #[test]
+    fn fixture_plan_step_cli_args_has_single_combined_entry() {
+        let config = load_fixture_config();
+        let plan = &config.workflow["plan"];
+        let step_args = plan.cli.as_ref().expect("plan must have cli").args.clone();
+        let last = step_args.last().expect("plan cli.args must not be empty");
+        assert!(
+            last.contains(":new-prd") && last.contains("${task}"),
+            "fixture plan's last cli.args entry must combine the plugin prefix and ${{task}} token, got: {last:?}"
+        );
+        let task_only_entries: Vec<_> = step_args
+            .iter()
+            .filter(|e| e.as_str() == "${task}")
+            .collect();
+        assert!(
+            task_only_entries.is_empty(),
+            "fixture plan must not have a bare '${{task}}' entry, got: {step_args:?}"
+        );
+    }
+
+    #[test]
+    fn fixture_breakdown_step_cli_args_has_single_combined_entry() {
+        let config = load_fixture_config();
+        let breakdown = &config.workflow["breakdown"];
+        let step_args = breakdown
+            .cli
+            .as_ref()
+            .expect("breakdown must have cli")
+            .args
+            .clone();
+        let last = step_args
+            .last()
+            .expect("breakdown cli.args must not be empty");
+        assert!(
+            last.contains(":prd-to-issues") && last.contains("${prd}"),
+            "fixture breakdown's last cli.args entry must combine the plugin prefix and ${{prd}} token, got: {last:?}"
+        );
+    }
+
+    #[test]
+    fn fixture_execute_step_cli_args_has_single_combined_entry() {
+        let config = load_fixture_config();
+        let execute = &config.workflow["execute"];
+        let step_args = execute
+            .cli
+            .as_ref()
+            .expect("execute must have cli")
+            .args
+            .clone();
+        let last = step_args
+            .last()
+            .expect("execute cli.args must not be empty");
+        assert!(
+            last.contains(":execute") && last.contains("${issue}") && last.contains("${notes}"),
+            "fixture execute's last cli.args entry must combine the plugin prefix, ${{issue}}, and ${{notes}}, got: {last:?}"
+        );
+    }
+
+    // Criterion 5: fixture has a context variable whose value is the empty string.
+    #[test]
+    fn fixture_has_context_var_with_empty_string_value() {
+        let config = load_fixture_config();
+        let has_empty = config.context.values().any(|v| v.is_empty());
+        assert!(
+            has_empty,
+            "fixture context must contain at least one variable with an empty-string value, context: {:?}",
+            config.context
+        );
+    }
+
+    // Criterion 6: fixture has a ${env:YWFLOW_TEST_UNSET_VAR} reference in one step entry.
+    #[test]
+    fn fixture_has_env_unset_var_token_in_step_cli_args() {
+        let config = load_fixture_config();
+        let has_token = config.workflow.values().any(|step| {
+            step.cli.as_ref().map_or(false, |cli| {
+                cli.args
+                    .iter()
+                    .any(|e| e.contains("${env:YWFLOW_TEST_UNSET_VAR}"))
+            })
+        });
+        assert!(
+            has_token,
+            "fixture must have a step cli.args entry containing '${{env:YWFLOW_TEST_UNSET_VAR}}'"
+        );
+    }
+
+    // Criterion 7: fixture has a ${cwd} reference in one step entry.
+    #[test]
+    fn fixture_has_cwd_token_in_step_cli_args() {
+        let config = load_fixture_config();
+        let has_token = config.workflow.values().any(|step| {
+            step.cli
+                .as_ref()
+                .map_or(false, |cli| cli.args.iter().any(|e| e.contains("${cwd}")))
+        });
+        assert!(
+            has_token,
+            "fixture must have a step cli.args entry containing '${{cwd}}'"
+        );
+    }
+
+    // Criterion 8: both files pass parse_and_validate with no UndeclaredCliArgToken errors.
+    // (Production config)
+    #[test]
+    fn production_config_passes_parse_and_validate() {
+        // load_production_config() calls parse_and_validate internally — if it panics the test fails.
+        let _ = load_production_config();
+    }
+
+    // (Fixture)
+    #[test]
+    fn fixture_config_passes_parse_and_validate() {
+        // load_fixture_config() calls parse_and_validate internally — if it panics the test fails.
+        let _ = load_fixture_config();
+    }
 }
