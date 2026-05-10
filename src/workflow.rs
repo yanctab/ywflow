@@ -194,6 +194,22 @@ pub fn run_step(
 
     let (args, _empty_tokens) = assemble_argv(global_cli, step, step_name, resolved_vars);
 
+    // Format the command as a shell-pasteable line.
+    let formatted = crate::prompt::format_command_line(command, &args);
+
+    // Collect context/env empties (step_arg empties are excluded from the warning path).
+    let context_env_empties: Vec<EmptyToken> = vec![];
+
+    // If any context or env tokens expanded to empty, warn and ask for confirmation.
+    if !context_env_empties.is_empty()
+        && !crate::prompt::warn_and_confirm(&context_env_empties, &formatted)
+    {
+        return Ok(());
+    }
+
+    // Unconditionally print the command to stderr before spawn.
+    eprintln!("{}", formatted);
+
     let status = std::process::Command::new(command)
         .args(args)
         .stdin(std::process::Stdio::inherit())
