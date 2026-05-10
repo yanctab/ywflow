@@ -91,6 +91,15 @@ pub enum ConfigError {
     },
     #[error("schema error: {0}")]
     Schema(String),
+    #[error(
+        "undeclared token '${{{{token}}}}' in step '{step}' cli.args (declared: {declared})",
+        declared = declared.join(", ")
+    )]
+    UndeclaredCliArgToken {
+        step: String,
+        token: String,
+        declared: Vec<String>,
+    },
 }
 
 const RESERVED_CONTEXT_KEYS: &[&str] = &["input", "cwd", "date"];
@@ -125,6 +134,23 @@ pub fn parse_and_validate(yaml: &str) -> Result<Config, ConfigError> {
     Ok(config)
 }
 
+/// Extracts token names from `${name}` placeholders in a string.
+/// Returns the inner name (e.g. "task" from "${task}", "env:FOO" from "${env:FOO}").
+fn extract_tokens(s: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut rest = s;
+    while let Some(start) = rest.find("${") {
+        rest = &rest[start + 2..];
+        if let Some(end) = rest.find('}') {
+            tokens.push(rest[..end].to_string());
+            rest = &rest[end + 1..];
+        } else {
+            break;
+        }
+    }
+    tokens
+}
+
 fn validate(config: &Config) -> Result<(), ConfigError> {
     // Check reserved context keys
     for key in config.context.keys() {
@@ -136,7 +162,7 @@ fn validate(config: &Config) -> Result<(), ConfigError> {
         }
     }
 
-    // Check arg order in each workflow step
+    // Check arg order and undeclared cli.args tokens in each workflow step
     for (step_name, step) in &config.workflow {
         let mut last_optional: Option<&str> = None;
         for arg in &step.args {
@@ -150,6 +176,26 @@ fn validate(config: &Config) -> Result<(), ConfigError> {
                 }
             } else {
                 last_optional = Some(&arg.name);
+            }
+        }
+
+        // Validate tokens in step-level cli.args
+        if let Some(step_cli) = &step.cli {
+            let declared: Vec<String> = step.args.iter().map(|a| a.name.clone()).collect();
+            for entry in &step_cli.args {
+                for token in extract_tokens(entry) {
+                    let is_reserved = RESERVED_CONTEXT_KEYS.contains(&token.as_str());
+                    let is_env = token.starts_with("env:");
+                    let is_context = config.context.contains_key(&token);
+                    let is_declared_arg = declared.contains(&token);
+                    if !is_reserved && !is_env && !is_context && !is_declared_arg {
+                        return Err(ConfigError::UndeclaredCliArgToken {
+                            step: step_name.clone(),
+                            token,
+                            declared,
+                        });
+                    }
+                }
             }
         }
     }
@@ -323,6 +369,151 @@ workflow:
             matches!(result, Err(ConfigError::Schema(_))),
             "expected ConfigError::Schema, got {:?}",
             result
+        );
+    }
+
+    #[test]
+    fn step_cli_args_with_declared_arg_token_passes_validation() {
+        let yaml = r#"
+cli:
+  command: claude
+workflow:
+  plan:
+    description: "Plan"
+    args:
+      - name: task
+        required: true
+        help: "The task"
+    cli:
+      args:
+        - --print
+        - ${task}
+"#;
+        let result = parse_and_validate(yaml);
+        assert!(
+            result.is_ok(),
+            "expected Ok for declared arg token, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn step_cli_args_with_undeclared_token_returns_error() {
+        let yaml = r#"
+cli:
+  command: claude
+workflow:
+  plan:
+    description: "Plan"
+    args:
+      - name: task
+        required: true
+        help: "The task"
+    cli:
+      args:
+        - --print
+        - ${undeclared}
+"#;
+        let result = parse_and_validate(yaml);
+        assert!(
+            matches!(
+                result,
+                Err(ConfigError::UndeclaredCliArgToken {
+                    ref step,
+                    ref token,
+                    ref declared
+                }) if step == "plan" && token == "undeclared" && declared == &vec!["task".to_string()]
+            ),
+            "expected ConfigError::UndeclaredCliArgToken, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn step_cli_args_with_reserved_cwd_token_passes_validation() {
+        let yaml = r#"
+cli:
+  command: claude
+workflow:
+  plan:
+    description: "Plan"
+    cli:
+      args:
+        - --workdir
+        - ${cwd}
+"#;
+        let result = parse_and_validate(yaml);
+        assert!(
+            result.is_ok(),
+            "expected Ok for reserved token ${{cwd}}, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn step_cli_args_with_env_token_passes_validation() {
+        let yaml = r#"
+cli:
+  command: claude
+workflow:
+  plan:
+    description: "Plan"
+    cli:
+      args:
+        - --token
+        - ${env:MY_VAR}
+"#;
+        let result = parse_and_validate(yaml);
+        assert!(
+            result.is_ok(),
+            "expected Ok for env-prefixed token, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn global_cli_args_with_undeclared_token_does_not_trigger_error() {
+        let yaml = r#"
+cli:
+  command: claude
+  args:
+    - --flag
+    - ${undeclared_global}
+workflow:
+  plan:
+    description: "Plan"
+"#;
+        let result = parse_and_validate(yaml);
+        assert!(
+            result.is_ok(),
+            "expected Ok for undeclared token in global cli.args, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn undeclared_cli_arg_token_error_formats_human_readable_message() {
+        let err = ConfigError::UndeclaredCliArgToken {
+            step: "plan".to_string(),
+            token: "undeclared".to_string(),
+            declared: vec!["task".to_string(), "url".to_string()],
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("plan"),
+            "message should contain step name 'plan': {msg}"
+        );
+        assert!(
+            msg.contains("undeclared"),
+            "message should contain bad token 'undeclared': {msg}"
+        );
+        assert!(
+            msg.contains("task"),
+            "message should contain declared arg 'task': {msg}"
+        );
+        assert!(
+            msg.contains("url"),
+            "message should contain declared arg 'url': {msg}"
         );
     }
 
