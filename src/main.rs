@@ -45,6 +45,7 @@ fn startup_init(start: &std::path::Path) -> Result<Option<config::Config>> {
 /// Collects raw argument values for a step using the provided lookup function.
 /// Only inserts an entry when the argument is actually provided (lookup returns Some).
 /// Absent optional args are simply omitted from the returned map.
+#[cfg(test)]
 fn build_raw_args<F>(
     args: &[config::StepArg],
     lookup: F,
@@ -57,9 +58,25 @@ where
         if let Some(val) = lookup(&arg.name) {
             raw_args.insert(arg.name.clone(), val);
         }
-        // Absent optional args are simply omitted; no empty-string fallback.
     }
     raw_args
+}
+
+/// Collect validated arg values from clap matches into a raw_args map.
+/// Absent optional args are NOT inserted — they are simply absent from the map.
+fn collect_raw_args(
+    step: &config::StepConfig,
+    step_matches: &clap::ArgMatches,
+) -> Result<std::collections::HashMap<String, String>> {
+    let mut raw_args = std::collections::HashMap::new();
+    for arg in &step.args {
+        if let Some(val) = step_matches.get_one::<String>(&arg.name) {
+            input::validate(&arg.name, val, &arg.accepts, &input::http_head_check)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            raw_args.insert(arg.name.clone(), val.clone());
+        }
+    }
+    Ok(raw_args)
 }
 
 fn check_required_env(required: &[String]) -> Result<()> {
@@ -144,24 +161,16 @@ fn run() -> Result<()> {
                 .get(name)
                 .ok_or_else(|| anyhow::anyhow!("unknown step: {name}"))?;
 
-            // Validate provided args, then collect raw argument values from clap matches.
-            // Absent optional args are simply omitted from raw_args.
-            for arg in &step.args {
-                if let Some(val) = step_matches.get_one::<String>(&arg.name) {
-                    input::validate(&arg.name, val, &arg.accepts, &input::http_head_check)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
-                }
-            }
-            let raw_args = build_raw_args(&step.args, |name| {
-                step_matches.get_one::<String>(name).cloned()
-            });
+            // Collect argument values from clap matches.
+            let raw_args = collect_raw_args(step, step_matches)?;
 
             // Resolve the full variable map.
             let resolved =
                 context::resolve(cfg, name, &raw_args).map_err(|e| anyhow::anyhow!("{e}"))?;
 
             // Launch the step.
-            workflow::run_step(&cfg.cli, step, &resolved).map_err(|e| anyhow::anyhow!("{e}"))?;
+            workflow::run_step(&cfg.cli, step, name, &resolved)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         None => {
             cli::build_command(config.as_ref()).print_help()?;
@@ -285,6 +294,110 @@ mod tests {
         );
     }
 
+    // ── Slice 57: Remove empty-string fallback for absent optional args ──────────
+
+    /// Absent optional arg must not appear in raw_args (no empty-string entry).
+    #[test]
+    fn absent_optional_arg_not_in_raw_args() {
+        use crate::config::{StepArg, StepConfig};
+        use clap::{Arg, Command};
+
+        let step = StepConfig {
+            description: "test step".to_string(),
+            args: vec![
+                StepArg {
+                    name: "issue".to_string(),
+                    accepts: vec![],
+                    required: true,
+                    help: "required arg".to_string(),
+                },
+                StepArg {
+                    name: "notes".to_string(),
+                    accepts: vec![],
+                    required: false,
+                    help: "optional arg".to_string(),
+                },
+            ],
+            cli: None,
+        };
+
+        // Build a clap subcommand matching the step structure.
+        let sub = Command::new("execute")
+            .arg(Arg::new("issue").required(true).index(1))
+            .arg(Arg::new("notes").required(false).index(2));
+        let cmd = Command::new("ywflow").subcommand(sub);
+        let matches = cmd
+            .try_get_matches_from(["ywflow", "execute", "https://github.com/x/y/issues/1"])
+            .expect("parse ok");
+        let (_, step_matches) = matches.subcommand().unwrap();
+
+        let raw_args = collect_raw_args(&step, step_matches).unwrap();
+
+        // Required arg present.
+        assert!(
+            raw_args.contains_key("issue"),
+            "required arg must be in raw_args"
+        );
+        // Absent optional arg must NOT be inserted (not even as empty string).
+        assert!(
+            !raw_args.contains_key("notes"),
+            "absent optional arg must not be present in raw_args, got: {:?}",
+            raw_args.get("notes")
+        );
+    }
+
+    /// When an optional arg IS supplied, it is still present in raw_args.
+    #[test]
+    fn present_optional_arg_is_in_raw_args() {
+        use crate::config::{StepArg, StepConfig};
+        use clap::{Arg, Command};
+
+        let step = StepConfig {
+            description: "test step".to_string(),
+            args: vec![
+                StepArg {
+                    name: "issue".to_string(),
+                    accepts: vec![],
+                    required: true,
+                    help: "required arg".to_string(),
+                },
+                StepArg {
+                    name: "notes".to_string(),
+                    accepts: vec![],
+                    required: false,
+                    help: "optional arg".to_string(),
+                },
+            ],
+            cli: None,
+        };
+
+        let sub = Command::new("execute")
+            .arg(Arg::new("issue").required(true).index(1))
+            .arg(Arg::new("notes").required(false).index(2));
+        let cmd = Command::new("ywflow").subcommand(sub);
+        let matches = cmd
+            .try_get_matches_from([
+                "ywflow",
+                "execute",
+                "https://github.com/x/y/issues/1",
+                "some notes",
+            ])
+            .expect("parse ok");
+        let (_, step_matches) = matches.subcommand().unwrap();
+
+        let raw_args = collect_raw_args(&step, step_matches).unwrap();
+
+        assert!(
+            raw_args.contains_key("issue"),
+            "required arg must be in raw_args"
+        );
+        assert_eq!(
+            raw_args.get("notes"),
+            Some(&"some notes".to_string()),
+            "present optional arg must be in raw_args with its value"
+        );
+    }
+
     /// Criterion 4: clap "derive" feature is absent from Cargo.toml; binary compiles.
     #[test]
     fn clap_derive_feature_absent() {
@@ -300,9 +413,9 @@ mod tests {
         );
     }
 
-    /// Criterion 1: absent optional arg is NOT inserted into raw_args (no empty-string entry).
+    /// Criterion 1: absent optional arg is NOT inserted into raw_args via build_raw_args.
     #[test]
-    fn absent_optional_arg_not_in_raw_args() {
+    fn build_raw_args_absent_optional_not_inserted() {
         use config::{AcceptsType, StepArg};
         // Simulate: one required arg (provided) and one optional arg (absent).
         let args = vec![

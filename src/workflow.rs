@@ -14,6 +14,8 @@ pub enum WorkflowError {
     CommandNotFound { command: String },
     #[error("exec failed: {0}")]
     Exec(#[from] std::io::Error),
+    #[error("step '{step}': cli.args references '${{{token}}}' but '--{token}' was not provided")]
+    UnresolvedCliArgToken { step: String, token: String },
 }
 
 /// Verify that `command` is on the system PATH by checking it exists via `which`.
@@ -39,24 +41,51 @@ pub fn check_command_available(command: &str) -> Result<String, WorkflowError> {
 
 /// Assemble the final argv for a step, expanding all `${variable}` tokens.
 ///
-/// Order: `<cli.command> [global_args...] [step_args...]`
+/// Order: `[global_args...] [step_args...]`
+///
+/// Step-level args are scanned for remaining `${...}` tokens after expansion;
+/// any that remain unresolved return `Err(WorkflowError::UnresolvedCliArgToken)`.
+/// Global args are not scanned (they may contain context variables resolved later).
 pub fn assemble_argv(
     global_cli: &CliConfig,
     step: &StepConfig,
+    step_name: &str,
     resolved_vars: &HashMap<String, String>,
-) -> Vec<String> {
-    let step_args = step
-        .cli
-        .as_ref()
-        .map(|c| c.args.clone())
-        .unwrap_or_default();
-
-    global_cli
+) -> Result<Vec<String>, WorkflowError> {
+    // Expand global args without error checking (global args are out of scope).
+    let mut argv: Vec<String> = global_cli
         .args
         .iter()
-        .chain(step_args.iter())
         .map(|arg| expand_tokens(arg, resolved_vars))
-        .collect()
+        .collect();
+
+    // Expand step-level args and scan for unresolved tokens.
+    if let Some(step_cli) = &step.cli {
+        for entry in &step_cli.args {
+            let expanded = expand_tokens(entry, resolved_vars);
+            // Detect any remaining ${...} tokens in the expanded result.
+            if let Some(token) = find_unresolved_token(&expanded) {
+                return Err(WorkflowError::UnresolvedCliArgToken {
+                    step: step_name.to_string(),
+                    token,
+                });
+            }
+            argv.push(expanded);
+        }
+    }
+
+    Ok(argv)
+}
+
+/// Return the name of the first unresolved `${name}` token found in `s`, or `None`.
+fn find_unresolved_token(s: &str) -> Option<String> {
+    if let Some(start) = s.find("${") {
+        let after_open = &s[start + 2..];
+        if let Some(end) = after_open.find('}') {
+            return Some(after_open[..end].to_string());
+        }
+    }
+    None
 }
 
 /// Substitute all `${key}` tokens in `s` using `vars`.
@@ -92,16 +121,17 @@ fn expand_tokens(s: &str, vars: &HashMap<String, String>) -> String {
 pub fn run_step(
     global_cli: &CliConfig,
     step: &StepConfig,
+    step_name: &str,
     resolved_vars: &HashMap<String, String>,
 ) -> Result<(), WorkflowError> {
     // Verify the CLI binary is available before trying to exec.
     let command = &global_cli.command;
     check_command_available(command)?;
 
-    let args = assemble_argv(global_cli, step, resolved_vars);
+    let args = assemble_argv(global_cli, step, step_name, resolved_vars)?;
 
     let status = std::process::Command::new(command)
-        .args(&args)
+        .args(args)
         .stdin(std::process::Stdio::inherit())
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
@@ -146,7 +176,7 @@ mod tests {
         let step = make_step(vec!["--worktree", "plan-session", "/plan-skill"]);
         let vars = HashMap::new();
 
-        let argv = assemble_argv(&global, &step, &vars);
+        let argv = assemble_argv(&global, &step, "plan", &vars).unwrap();
         assert_eq!(
             argv,
             vec![
@@ -168,7 +198,7 @@ mod tests {
         vars.insert("model".to_string(), "claude-opus-4-5".to_string());
         vars.insert("task".to_string(), "do_stuff".to_string());
 
-        let argv = assemble_argv(&global, &step, &vars);
+        let argv = assemble_argv(&global, &step, "plan", &vars).unwrap();
         assert_eq!(argv, vec!["--model", "claude-opus-4-5", "do_stuff"]);
     }
 
@@ -235,7 +265,7 @@ mod tests {
             cli: None,
         };
         let vars = HashMap::new();
-        let result = run_step(&global, &step, &vars);
+        let result = run_step(&global, &step, "test", &vars);
         assert!(
             result.is_ok(),
             "run_step must return Ok for a clean exit: {:?}",
@@ -257,8 +287,8 @@ mod tests {
         };
         let vars = HashMap::new();
 
-        let first = run_step(&global, &step, &vars);
-        let second = run_step(&global, &step, &vars);
+        let first = run_step(&global, &step, "test", &vars);
+        let second = run_step(&global, &step, "test", &vars);
 
         assert!(first.is_ok(), "first invocation must succeed: {:?}", first);
         assert!(
@@ -279,7 +309,75 @@ mod tests {
         };
         let vars = HashMap::new();
 
-        let argv = assemble_argv(&global, &step, &vars);
+        let argv = assemble_argv(&global, &step, "plan", &vars).unwrap();
         assert_eq!(argv, vec!["--model", "claude-opus-4-5"]);
+    }
+
+    // ── Slice 58: Runtime error for unresolved step-level cli.args tokens ────────
+
+    /// Unresolved step-level ${token} → UnresolvedCliArgToken error.
+    #[test]
+    fn unresolved_step_arg_token_returns_error() {
+        let global = make_global_cli(vec![]);
+        let step = make_step(vec!["${notes}"]);
+        let vars: HashMap<String, String> = HashMap::new(); // notes absent
+
+        let result = assemble_argv(&global, &step, "execute", &vars);
+        assert!(
+            matches!(
+                result,
+                Err(WorkflowError::UnresolvedCliArgToken {
+                    ref step,
+                    ref token
+                }) if step == "execute" && token == "notes"
+            ),
+            "expected UnresolvedCliArgToken for absent optional arg, got {:?}",
+            result
+        );
+    }
+
+    /// Error message for unresolved step-level token matches the exact format.
+    #[test]
+    fn unresolved_cli_arg_token_error_message() {
+        let err = WorkflowError::UnresolvedCliArgToken {
+            step: "execute".to_string(),
+            token: "notes".to_string(),
+        };
+        let expected =
+            "step 'execute': cli.args references '${notes}' but '--notes' was not provided";
+        assert_eq!(err.to_string(), expected);
+    }
+
+    /// Mixed context var and step arg in same entry expands both when both are in vars.
+    #[test]
+    fn mixed_context_and_step_arg_expands_both() {
+        let global = make_global_cli(vec![]);
+        let step = make_step(vec!["--flag", "${base}/${issue}"]);
+        let mut vars = HashMap::new();
+        vars.insert("base".to_string(), "https://github.com".to_string());
+        vars.insert("issue".to_string(), "42".to_string());
+
+        let argv = assemble_argv(&global, &step, "execute", &vars).unwrap();
+        assert_eq!(argv, vec!["--flag", "https://github.com/42"]);
+    }
+
+    /// Global cli.args with unresolved tokens do NOT trigger UnresolvedCliArgToken.
+    #[test]
+    fn global_unresolved_token_does_not_trigger_error() {
+        let global = make_global_cli(vec!["${global_token}"]);
+        let step = StepConfig {
+            description: "step with no step-level cli".to_string(),
+            args: vec![],
+            cli: None, // no step-level cli.args
+        };
+        let vars: HashMap<String, String> = HashMap::new();
+
+        // Should succeed (no error) — global args are not scanned for unresolved tokens.
+        let result = assemble_argv(&global, &step, "plan", &vars);
+        assert!(
+            result.is_ok(),
+            "global unresolved token must not trigger UnresolvedCliArgToken, got {:?}",
+            result
+        );
     }
 }
