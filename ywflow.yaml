@@ -1,9 +1,11 @@
 context:
-  planning_model: claude-opus-4-7
-  breakdown_model: claude-sonnet-4.6
-  execute_model: claude-haiku-4.5
+  planning_model: Opus
+  breakdown_model: Sonnet
+  execute_model: Haiku
+  review_model: Opus
+  freestyle_model: Sonnet
   project_dir: ${cwd}
-  plugin: yanct-claude-plugin
+  plugin: ywflow
 
 cli:
   command: claude
@@ -14,38 +16,54 @@ plugins:
     path: .claude/skills
 
 workflow:
-  plan:
-    description: "Plan the work: analyse the task and produce a PRD"
+  session:
+    description: "A deep dive interactive planning session producing a PRD"
     args:
-      - name: task
+      - name: description
         accepts:
           - string
         required: true
-        help: "A description of the task to plan"
+        help: "A short description to get the interactive planning session going"
     cli:
       args:
         - --model
         - ${planning_model}
         - --worktree
         - plan-session
-        - "/${plugin}:new-prd ${task}"
+        - "/${plugin}:planning-session ${description}"
+
+  plan:
+    description: "Create a prd or verify an exiting one"
+    args:
+      - name: input
+        accepts:
+          - string
+          - file
+        required: true
+        help: "A description or a PRD file"
+    cli:
+      args:
+        - --model
+        - ${planning_model}
+        - --worktree
+        - plan-session
+        - "/${plugin}:new-prd ${input}"
 
   breakdown:
     description: "Break down the PRD into implementation slices"
     args:
-      - name: prd
+      - name: input
         accepts:
-          - file
           - url
         required: true
-        help: "Path or URL of the PRD to break down"
+        help: "URL to PRD to break down into tasks"
     cli:
       args:
         - --model
         - ${breakdown_model}
         - --worktree
         - breakdown-session
-        - "/${plugin}:prd-to-issues ${prd}"
+        - "/${plugin}:prd-to-issues ${input}"
 
   execute:
     description: "Execute a single implementation slice"
@@ -55,14 +73,42 @@ workflow:
           - url
         required: true
         help: "GitHub issue URL for the slice to implement"
-      - name: notes
-        accepts: []
-        required: false
-        help: "Optional implementation notes"
     cli:
       args:
         - --model
         - ${execute_model}
         - --worktree
         - execute-session
-        - "/${plugin}:execute ${issue} ${notes}"
+        - "/${plugin}:execute ${issue}"
+
+  review:
+    description: "Review a PR"
+    args:
+      - name: pr
+        accepts:
+          - url
+        required: true
+        help: "GitHub PR to review"
+    cli:
+      args:
+        - --model
+        - ${review_model}
+        - --worktree
+        - review-session
+        - "/review ${pr}"
+
+  freestyle:
+    description: "A freestyle session write whatever you want"
+    args:
+      - name: input
+        accepts:
+          - string
+        required: true
+        help: "A freestyle string for the session"
+    cli:
+      args:
+        - --model
+        - ${freestyle_model}
+        - --worktree
+        - freestyle-session
+        - "${input}"

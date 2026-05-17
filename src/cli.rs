@@ -170,12 +170,10 @@ mod tests {
         use std::fs;
 
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let yaml_path = manifest_dir.join("ywflow.yaml");
-        if !yaml_path.exists() {
-            return;
-        }
-        let content = fs::read_to_string(&yaml_path).expect("read ywflow.yaml");
-        let cfg = config::parse_and_validate(&content).expect("ywflow.yaml must parse");
+        let yaml_path = manifest_dir.join("tests/assets/ywflow.yaml");
+        let content = fs::read_to_string(&yaml_path).expect("read tests/assets/ywflow.yaml");
+        let cfg =
+            config::parse_and_validate(&content).expect("tests/assets/ywflow.yaml must parse");
 
         let cmd = build_command(Some(&cfg));
         let result = cmd.try_get_matches_from(["ywflow", "plan"]);
